@@ -1,0 +1,86 @@
+http:
+  routers:
+    to-ltai-api:
+      rule: PathPrefix(`/ai/access`)
+      service: ai-api
+      priority: 1
+      middlewares:
+        - anonymous-middlewares
+
+    to-authentificated-ltai-api:
+      rule: PathPrefix(`/ai/access`) && HeaderRegexp(`Authorization`, `^.*$`)
+      service: ai-api
+      priority: 10
+      middlewares:
+        - authenticated-middlewares
+
+  services:
+    ai-api:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+        - url: "https://ipfs.aleph.cloud"
+
+
+  middlewares:
+    ext-auth:
+      forwardAuth:
+        address: http://127.0.0.1:8000/auth/check
+        trustForwardHeader: true
+        authRequestHeaders:
+          - Authorization
+          - Origin
+          - Access-Control-Request-Method
+          
+    anonymous-auth:
+      replacePath:
+        path: "/ipfs/QmXZ9d7QMuUNbMMoBxadtSsoAY1efpFHJGUuwCatbroV12"
+
+    access-granted:
+      replacePath:
+        path: "/ipfs/Qmf654v2yQyY4n2tsFeUsLkV1hdxwVA1PJa6MZFmzUuNp8"
+
+    # Human speed
+    anonymous-ratelimit:
+      rateLimit:
+        average: 1
+        period: 5s
+        burst: 2
+
+    premium-ratelimit:
+      rateLimit:
+        average: 2
+        period: 1s
+        burst: 4
+        sourceCriterion:
+          requestHeaderName: "Authorization"
+
+    pro-ratelimit:
+      rateLimit:
+        average: 4
+        period: 1s
+        burst: 6
+        sourceCriterion:
+          requestHeaderName: "Authorization"
+
+    advanced-ratelimit:
+      rateLimit:
+        average: 7
+        period: 1s
+        burst: 9
+        sourceCriterion:
+          requestHeaderName: "Authorization"
+
+    anonymous-middlewares:
+      chain:
+        middlewares:
+          - anonymous-auth
+          - anonymous-ratelimit
+
+    authenticated-middlewares:
+      chain:
+        middlewares:
+          - ext-auth
+          - access-granted
+          - premium-ratelimit
+
