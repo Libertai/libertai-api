@@ -7,6 +7,7 @@ from aleph_message.models import MessageType
 from libertai.crypto.common import decrypt_secret, encrypt_secret, generate_unique_token
 from libertai.crypto.ethereum import get_address_from_signature
 from libertai.interfaces.subscription import SubscriptionProvider
+from libertai.utils.signature import get_token_message
 from src.config import config
 from src.interfaces.account import CreateAccount
 
@@ -35,18 +36,18 @@ async def register_app(token_info: dict):
         )
 
 
-def create_token_for_holder(account):
+def create_token(account):
     token = generate_unique_token()
     return token
 
 async def create_token_from_account(account: CreateAccount):
-    address = get_address_from_signature(account.message, account.signature)
+    message = get_token_message()
+    address = get_address_from_signature(message, account.signature)
 
     if account.account.address != address:
         raise InvalidSignatureError({"message": "message and signature address mismatch!"})
 
-    if account.provider.value == SubscriptionProvider.hold:
-        token = create_token_for_holder(account)
+    token = create_token(account)
 
     token_info = {
         "owner": address,

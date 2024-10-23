@@ -9,11 +9,7 @@ from pydantic import BaseModel
 
 
 class CreateAccount(BaseModel):
-    id: Optional[str]
     account: SubscriptionAccount
-    type: Optional[SubscriptionType]
-    provider: SubscriptionProvider
-    message: str
     signature: str
 
 

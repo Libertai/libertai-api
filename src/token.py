@@ -14,7 +14,7 @@ router = APIRouter(tags=["Token service"])
 @router.post("/token/message")
 async def token_message(message: TokenMessage):
 
-    message_to_sign = get_token_message(message.provider)
+    message_to_sign = get_token_message()
     data = {
         "message": message_to_sign
     }
