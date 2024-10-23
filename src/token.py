@@ -11,8 +11,8 @@ from src.utils.account import InvalidSignatureError, create_token_from_account
 router = APIRouter(tags=["Token service"])
 
 
-@router.post("/token/message")
-async def token_message(message: TokenMessage):
+@router.get("/token/message")
+async def token_message():
 
     message_to_sign = get_token_message()
     data = {
