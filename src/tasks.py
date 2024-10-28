@@ -1,19 +1,14 @@
-from src.token_manager import TokenManager
-from src.utils.common import current_timestamp_5min_interval
+from src.account_manager import AccountManager
+from src.interfaces.account import TokenAccount
 
-token_manager = TokenManager()
+account_manager = AccountManager()
 
 
-def add_token_task(token):
-    print("task called")
-    token_manager.add_token(token)
+def add_application_task(account: TokenAccount):
+    print("application task called")
+    account_manager.add_account(account)
 
 
 def call_event_task(token):
-    token_manager.increment_requests(token)
+    account_manager.increment_calls(token)
     print("collect calls...")
-
-async def sync_metrics():
-    current_unix_timestamp = current_timestamp_5min_interval().strftime("%s")
-
-    metrics = token_manager.get_metrics()

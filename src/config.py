@@ -14,8 +14,12 @@ class _Config:
     LTAI_SENDER_ADDRESS: str
     LTAI_AUTH_POST_CHANNEL: str
     LTAI_AUTH_POST_TYPE: bytes
-    LTAI_AUTH_POST_METRICS_TYPE: str
-
+    LTAI_AUTH_METRICS_POST_TYPE: str
+    LTAI_AUTH_METRICS_POST_CHANNEL: str
+    LTAI_AUTH_REV_TAG: str
+    SUBSCRIPTION_POST_SENDER_ADDRESS: str
+    SUBSCRIPTION_POST_TYPE: str
+    SUBSCRIPTION_POST_CHANNEL: str
     subscription_plans: list[list[SubscriptionDefinition]]
 
     def __init__(self):
@@ -26,7 +30,12 @@ class _Config:
         self.LTAI_SENDER_ADDRESS = os.getenv("ALEPH_SENDER_ADDRESS")
         self.LTAI_AUTH_POST_CHANNEL = os.getenv("LTAI_AUTH_POST_CHANNEL", "libertai-auth")
         self.LTAI_AUTH_POST_TYPE = os.getenv("LTAI_AUTH_POST_TYPE", "libertai-auth-keys")
-        self.LTAI_AUTH_POST_METRICS_TYPE = os.getenv("LTAI_AUTH_POST_METRICS_TYPE", "libertai-user-metrics")
+        self.LTAI_AUTH_METRICS_POST_TYPE = os.getenv("LTAI_AUTH_METRICS_POST_TYPE", "libertai-user-metrics")
+        self.LTAI_AUTH_METRICS_POST_CHANNEL = os.getenv("LTAI_AUTH_METRICS_POST_CHANNEL", "libertai-metrics")
+        self.LTAI_AUTH_REV_TAG = os.getenv("LTAI_AUTH_REV_TAG", "rev_001")
 
+        self.SUBSCRIPTION_POST_SENDER_ADDRESS = os.getenv("SUBSCRIPTION_POST_SENDER_ADDRESS")
+        self.SUBSCRIPTION_POST_TYPE = os.getenv("SUBSCRIPTION_POST_TYPE")
+        self.SUBSCRIPTION_POST_CHANNEL = os.getenv("SUBSCRIPTION_POST_CHANNEL")
 
 config = _Config()
