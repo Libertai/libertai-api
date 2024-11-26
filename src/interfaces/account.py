@@ -1,6 +1,6 @@
 from typing import Optional
 
-from libertai.interfaces.subscription import (
+from libertai_utils.interfaces.subscription import (
     Subscription,
     SubscriptionAccount,
     SubscriptionProvider,

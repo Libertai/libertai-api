@@ -6,8 +6,8 @@ from fastapi import FastAPI
 from src.account import router as account_router
 from src.account_manager import AccountManager
 from src.auth import router as auth_router
-from src.tasks import sync_metrics
 from src.token import router as token_router
+from src.utils.metrics import sync_metrics
 
 account_manager = AccountManager()
 

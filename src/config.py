@@ -1,7 +1,7 @@
 import os
 
 from dotenv import load_dotenv
-from libertai.interfaces.subscription import (
+from libertai_utils.interfaces.subscription import (
     SubscriptionDefinition,
     SubscriptionProvider,
     SubscriptionType,

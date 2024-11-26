@@ -1,16 +1,17 @@
 import hashlib
 from datetime import datetime
+from uuid import uuid4
 
 from aleph.sdk import AlephHttpClient, AuthenticatedAlephHttpClient
 from aleph.sdk.chains.ethereum import ETHAccount
 from aleph.sdk.query.filters import MessageFilter
 from aleph_message.models import MessageType
-from libertai.crypto.common import decrypt_secret, encrypt_secret, generate_unique_token
-from libertai.crypto.ethereum import get_address_from_signature
-from libertai.interfaces.subscription import Subscription, SubscriptionProvider
-from libertai.utils.signature import get_token_message
+from libertai_utils.chains.ethereum import is_eth_signature_valid
+from libertai_utils.interfaces.subscription import Subscription
+from libertai_utils.utils.crypto import decrypt, encrypt
 from src.config import config
 from src.interfaces.account import CreateAccount, TokenAccount
+from src.utils.signature import get_token_message
 
 
 class InvalidSignatureError(Exception):
@@ -30,10 +31,10 @@ class SubscriptionNotValidError(Exception):
 
 async def register_application(account: TokenAccount, token: str):
     aleph_account = ETHAccount(config.LTAI_SENDER_SK)
-    encrypted_token = encrypt_secret(aleph_account.get_public_key(), token.encode())
+    encrypted_token = encrypt(token, aleph_account.get_public_key())
     content = {
         "name": account.name,
-        "etk": encrypted_token.hex(),
+        "etk": encrypted_token,
         "owner": account.owner,
         "tags": [account.owner, config.LTAI_AUTH_REV_TAG]
     }
@@ -50,15 +51,14 @@ async def register_application(account: TokenAccount, token: str):
 
 
 def create_token(account):
-    token = generate_unique_token()
-    return token
+    return uuid4().hex
 
 
 async def create_token_from_account(account: CreateAccount):
     message = get_token_message()
-    address = get_address_from_signature(message, account.signature)
 
-    if account.account.address != address:
+    address = account.account.address
+    if not is_eth_signature_valid(message, account.signature, address):
         raise InvalidSignatureError({"message": "message and signature address mismatch!"})
 
     subscription = await get_subscription(address)
@@ -105,14 +105,16 @@ async def get_active_accounts() -> set:
             data = item.content.content
 
             subscription = await get_subscription(data["owner"])
-            if not is_subscription_active(subscription):
+
+            if not subscription or not is_subscription_active(subscription):
                 continue
 
-            token = decrypt_secret(
-                config.LTAI_SENDER_SK,
-                bytes.fromhex(data["etk"])
+            token = decrypt(
+                data["etk"],
+                config.LTAI_SENDER_SK
             )
-            sha1_token = hashlib.sha1(token).hexdigest()
+
+            sha1_token = hashlib.sha1(token.encode()).hexdigest()
 
             accounts.add(TokenAccount(
                 name=data["name"],
