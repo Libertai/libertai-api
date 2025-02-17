@@ -29,9 +29,9 @@ class SubscriptionNotValidError(Exception):
     pass
 
 
-async def register_application(account: TokenAccount, token: str):
+async def register_application(account: TokenAccount):
     aleph_account = ETHAccount(config.LTAI_SENDER_SK)
-    encrypted_token = encrypt(token, aleph_account.get_public_key())
+    encrypted_token = encrypt(account._token, aleph_account.get_public_key())
     content = {
         "name": account.name,
         "etk": encrypted_token,
@@ -78,12 +78,11 @@ async def create_token_from_account(account: CreateAccount):
         subscription=subscription
     )
 
-    await register_application(account, token)
-    return {
-        "account": account,
-        "token": token
-    }
+    account.set_token(token)
 
+    #await register_application(account)
+    print("account? token", account.get_token())
+    return account
 
 async def get_active_accounts() -> set:
     accounts = set()
@@ -116,12 +115,15 @@ async def get_active_accounts() -> set:
 
             sha1_token = hashlib.sha1(token.encode()).hexdigest()
 
-            accounts.add(TokenAccount(
+            account = TokenAccount(
                 name=data["name"],
                 sha1_token=sha1_token,
                 owner=data["owner"],
                 subscription=subscription
-            ))
+            )
+
+            account.set_token(token)
+            accounts.add(account)
 
     return accounts
 

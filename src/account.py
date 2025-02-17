@@ -1,27 +1,27 @@
 from http import HTTPStatus
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from libertai_utils.chains.ethereum import is_eth_signature_valid
 
-from src.interfaces.account import Account, CreateAccount, TokenMessage
-from src.utils.account import get_subscription
+from src.account_manager import AccountManager
+from src.interfaces.account import Account, AccountListResponse, TokenAccount
+from src.utils.account import InvalidSignatureError, get_subscription
+from src.utils.signature import get_reveal_message
 
 router = APIRouter(tags=["Account service"])
+account_manager = AccountManager()
 
 
-@router.get("/account/status")
-async def account_status():
-
-    address = "0x1b6060cfe8dc7293948c44ffce33f03a79d51e90"
+@router.get("/account/{address}/status")
+async def account_status(address):
     data = await get_subscription(address)
-    return JSONResponse(content=data, status_code=HTTPStatus.OK)
+    return JSONResponse(content=data.dict(), status_code=HTTPStatus.OK)
 
 
-@router.delete("/account")
-async def account_delete(
-        account: Account,
-        background_tasks: BackgroundTasks
-):
+@router.delete("/account/{address}")
+async def account_delete(background_tasks: BackgroundTasks):
     try:
         # @todo
         #
@@ -41,3 +41,28 @@ async def account_metrics(
         pass
     except Exception:
         raise HTTPException(status_code=503)
+
+
+@router.get("/account/{address}/list")
+async def account_list(
+        address, chain: str | None = "BASE",
+        reveal_message_signature: str | None = None
+) -> AccountListResponse:
+    reveal_tokens = False
+    if reveal_message_signature is not None:
+        reveal_message = get_reveal_message()
+        if not is_eth_signature_valid(reveal_message, reveal_message_signature, address):
+            raise HTTPException(status_code=401)
+        else:
+            reveal_tokens = True
+
+    accounts = account_manager.get_accounts_by_owner(address.lower(), reveal_tokens)
+
+    if reveal_tokens is False and accounts[0].token != "**hidden**":
+        raise HTTPException(status_code=500)
+
+    data = AccountListResponse(
+        accounts=accounts,
+        reveal_message=get_reveal_message()
+    )
+    return JSONResponse(content=jsonable_encoder(data), status_code=HTTPStatus.OK)

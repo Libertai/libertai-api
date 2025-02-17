@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
 
 from src.account import router as account_router
 from src.account_manager import AccountManager
@@ -27,6 +28,19 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="LibertAI backend service", lifespan=lifespan)
+
+origins = [
+    "https://chat.libertai.io",
+    "http://localhost:9000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(auth_router)
 app.include_router(token_router)
 app.include_router(account_router)

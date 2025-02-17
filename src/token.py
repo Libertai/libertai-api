@@ -3,7 +3,7 @@ from http import HTTPStatus
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 
-from src.interfaces.account import CreateAccount
+from src.interfaces.account import CreateAccount, TokenAccount
 from src.tasks import add_application_task
 from src.utils.account import (
     InvalidSignatureError,
@@ -27,17 +27,21 @@ async def token_message():
 
 @router.post("/token")
 async def token_create(
-        account: CreateAccount,
+        account_payload: CreateAccount,
         background_tasks: BackgroundTasks
-):
+) -> TokenAccount:
     try:
-        data = await create_token_from_account(account)
-        background_tasks.add_task(add_application_task, data["account"])
+        account = await create_token_from_account(account_payload)
+        background_tasks.add_task(add_application_task, account)
+        """
         response = {
             "name": data["account"].name,
             "owner": data["account"].owner,
             "token": data["token"]
         }
+        """
+        print("do we have token?", account._token)
+        response = account.dict()
         return JSONResponse(content=response, status_code=HTTPStatus.OK)
     except (
             InvalidSignatureError,

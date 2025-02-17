@@ -15,6 +15,9 @@ async def sync_metrics():
     current_unix_timestamp = int(current_timestamp_5min_interval().strftime("%s"))
 
     metrics = account_manager.get_metrics()
+    if metrics is None:
+        return
+
     for metric in metrics.values:
         """Sync after current interval"""
         if metric.ts <= current_unix_timestamp:

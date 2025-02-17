@@ -16,6 +16,7 @@ class AccountManager:
             self.tokens = set()
             """Subscription metadata"""
             self.accounts = {}
+            self.owner_to_sha1_token = {}
             """Save request calls"""
             self.calls = {}
 
@@ -31,10 +32,14 @@ class AccountManager:
 
     def add_account(self, account):
         self.tokens.add(account.sha1_token)
-        if account.sha1_token == "98ba756675cc9ce059b669b16e1cbfd4e01799bf":
+        if account.sha1_token == "7c586ee9711d36ef176901371b3006c142268637":
             self.increment_calls(account.sha1_token)
             self.increment_calls(account.sha1_token)
         self.accounts[account.sha1_token] = account
+
+        if account.owner not in self.owner_to_sha1_token:
+            self.owner_to_sha1_token[account.owner] = []
+        self.owner_to_sha1_token[account.owner].append(account.sha1_token)
 
     def token_exists(self, sha1_token):
         return sha1_token in self.tokens
@@ -105,3 +110,16 @@ class AccountManager:
         accounts = await get_active_accounts()
         self.add_accounts(accounts)
         print(f"Loaded {len(accounts)} accounts")
+
+    def get_accounts_by_owner(self, address, reveal_token=False):
+        accounts = []
+        if address in self.owner_to_sha1_token:
+            for sha1_token in self.owner_to_sha1_token[address]:
+                """ use a copy as the token can be revealed if not !!! """
+                account = self.accounts[sha1_token].copy()
+                print("is reveal activated", reveal_token)
+                if reveal_token:
+                    account.reveal_token()
+                accounts.append(account)
+
+        return accounts
