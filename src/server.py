@@ -42,5 +42,5 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
-app.include_router(token_router)
-app.include_router(account_router)
+#app.include_router(token_router)
+#app.include_router(account_router)

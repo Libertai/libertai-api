@@ -17,8 +17,10 @@ account_manager = AccountManager()
 @router.get("/account/{address}/status")
 async def account_status(address):
     data = await get_subscription(address)
-    return JSONResponse(content=data.dict(), status_code=HTTPStatus.OK)
-
+    if data:
+        return JSONResponse(content=data.dict(), status_code=HTTPStatus.OK)
+    else:
+        raise HTTPException(status_code=404)
 
 @router.delete("/account/{address}")
 async def account_delete(background_tasks: BackgroundTasks):
@@ -57,6 +59,9 @@ async def account_list(
             reveal_tokens = True
 
     accounts = account_manager.get_accounts_by_owner(address.lower(), reveal_tokens)
+
+    if len(accounts) == 0:
+        raise HTTPException(status_code=404)
 
     if reveal_tokens is False and accounts[0].token != "**hidden**":
         raise HTTPException(status_code=500)

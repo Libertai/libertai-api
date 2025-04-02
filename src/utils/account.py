@@ -2,6 +2,7 @@ import hashlib
 from datetime import datetime
 from uuid import uuid4
 
+import aiohttp
 from aleph.sdk import AlephHttpClient, AuthenticatedAlephHttpClient
 from aleph.sdk.chains.ethereum import ETHAccount
 from aleph.sdk.query.filters import MessageFilter
@@ -10,7 +11,7 @@ from libertai_utils.chains.ethereum import is_eth_signature_valid
 from libertai_utils.interfaces.subscription import Subscription
 from libertai_utils.utils.crypto import decrypt, encrypt
 from src.config import config
-from src.interfaces.account import CreateAccount, TokenAccount
+from src.interfaces.account import ApiKey, CreateAccount, TokenAccount
 from src.utils.signature import get_token_message
 
 
@@ -84,7 +85,8 @@ async def create_token_from_account(account: CreateAccount):
     print("account? token", account.get_token())
     return account
 
-async def get_active_accounts() -> set:
+
+async def __get_active_accounts() -> set:
     accounts = set()
     async with AlephHttpClient(
             api_server=config.ALEPH_API_URL
@@ -126,6 +128,36 @@ async def get_active_accounts() -> set:
             accounts.add(account)
 
     return accounts
+
+
+async def get_active_accounts() -> set:
+    accounts = set()
+    try:
+        async with aiohttp.ClientSession() as session:
+            session.headers["x-admin-token"] = config.BACKEND_SECRET_TOKEN
+            path = "api-keys/admin/list"
+            async with session.get(f"{config.BACKEND_API_URL}/{path}") as response:
+                if response.status == 200:
+                    data = await response.json()
+                    for account in data.get("keys"):
+                        accounts.add(ApiKey(
+                            id=account["id"],
+                            key=account["key"],
+                            name=account["name"],
+                            user_address=account["user_address"],
+                            created_at=account["created_at"],
+                            is_active=account["is_active"],
+                            monthly_limit=account["monthly_limit"]
+                        ))
+                else:
+                    print(f"Error fetching accounts: {response.status}")
+                    return accounts
+    except Exception as e:
+        print(f"Exception fetching accounts {str(e)}")
+        return accounts
+
+    return accounts
+
 
 
 async def get_subscription(address: str):

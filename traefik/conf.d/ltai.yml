@@ -14,12 +14,20 @@ http:
       middlewares:
         - authenticated-middlewares
 
+    to-authentificated-inference-ltai-api:
+      rule: PathPrefix(`/v1/completions`) && HeaderRegexp(`Authorization`, `^.*$`)
+      service: ai-api
+      priority: 10
+      middlewares:
+        - authenticated-middlewares
+        - completion-path
+
   services:
     ai-api:
       loadBalancer:
         passHostHeader: false
         servers:
-        - url: "https://ipfs.aleph.cloud"
+        - url: "http://46.255.204.205:5401"
 
 
   middlewares:
@@ -83,4 +91,7 @@ http:
           - ext-auth
           - access-granted
           - premium-ratelimit
-
+          
+    completion-path:
+      replacePath:
+        path: "/completion"

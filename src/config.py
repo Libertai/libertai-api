@@ -22,6 +22,9 @@ class _Config:
     SUBSCRIPTION_POST_CHANNEL: str
     subscription_plans: list[list[SubscriptionDefinition]]
 
+    BACKEND_API_URL: str | None
+    BACKEND_SECRET_TOKEN: str | None
+
     def __init__(self):
         load_dotenv()
 
@@ -37,5 +40,8 @@ class _Config:
         self.SUBSCRIPTION_POST_SENDER_ADDRESS = os.getenv("SUBSCRIPTION_POST_SENDER_ADDRESS")
         self.SUBSCRIPTION_POST_TYPE = os.getenv("SUBSCRIPTION_POST_TYPE")
         self.SUBSCRIPTION_POST_CHANNEL = os.getenv("SUBSCRIPTION_POST_CHANNEL")
+        self.BACKEND_API_URL = os.getenv("BACKEND_API_URL")
+        self.BACKEND_SECRET_TOKEN = os.getenv("BACKEND_SECRET_TOKEN")
+
 
 config = _Config()
