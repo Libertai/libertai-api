@@ -14,7 +14,7 @@ keys_manager = KeysManager()
 
 async def run_jobs():
     while True:
-        await asyncio.sleep(300)
+        await asyncio.sleep(30)
         await keys_manager.refresh_keys()
 
 
