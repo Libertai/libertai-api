@@ -4,26 +4,24 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
-from src.account import router as account_router
-from src.account_manager import AccountManager
+from src.api_keys import KeysManager
 from src.auth import router as auth_router
-from src.token import router as token_router
-from src.utils.metrics import sync_metrics
+from src.model import router as model_router
+from src.proxy import router as proxy_router
 
-account_manager = AccountManager()
+keys_manager = KeysManager()
 
 
 async def run_jobs():
     while True:
         await asyncio.sleep(300)
-        await sync_metrics()
-        await account_manager.load_active_accounts()
+        await keys_manager.refresh_keys()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Starting server...")
-    await account_manager.load_active_accounts()
+    await keys_manager.refresh_keys()
     asyncio.create_task(run_jobs())
     yield
 
@@ -32,6 +30,7 @@ app = FastAPI(title="LibertAI backend service", lifespan=lifespan)
 origins = [
     "https://chat.libertai.io",
     "http://localhost:9000",
+    "https://bafybeid7ag5d4it32ylu5nkqw6lzsddtqzhhs3egu2pskwcadbz6jzmxby.ipfs.aleph.sh"
 ]
 
 app.add_middleware(
@@ -42,5 +41,5 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
-#app.include_router(token_router)
-#app.include_router(account_router)
+app.include_router(model_router)
+app.include_router(proxy_router)

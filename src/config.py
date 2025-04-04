@@ -1,47 +1,65 @@
+import json
 import os
+from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
-from libertai_utils.interfaces.subscription import (
-    SubscriptionDefinition,
-    SubscriptionProvider,
-    SubscriptionType,
-)
+
+
+class ServerConfig:
+    type: str
+    url: str
+    weight: int
+    gpu: bool
+    completion_path: str
+    api_type: str
+    prompt_format: str
+
+    def __init__(self, type: str, url: str, weight: int, gpu: bool, completion_path: str, api_type: str, prompt_format):
+        self.type = type
+        self.url = url
+        self.completion_path = completion_path
+        self.api_type = api_type
+        self.weight = weight
+        self.gpu = gpu
+        self.prompt_format = prompt_format
 
 
 class _Config:
-    ALEPH_API_URL: str | None
-    LTAI_SENDER_SK: str
-    LTAI_SENDER_ADDRESS: str
-    LTAI_AUTH_POST_CHANNEL: str
-    LTAI_AUTH_POST_TYPE: bytes
-    LTAI_AUTH_METRICS_POST_TYPE: str
-    LTAI_AUTH_METRICS_POST_CHANNEL: str
-    LTAI_AUTH_REV_TAG: str
-    SUBSCRIPTION_POST_SENDER_ADDRESS: str
-    SUBSCRIPTION_POST_TYPE: str
-    SUBSCRIPTION_POST_CHANNEL: str
-    subscription_plans: list[list[SubscriptionDefinition]]
-
     BACKEND_API_URL: str | None
     BACKEND_SECRET_TOKEN: str | None
+    MODELS: Dict[str, List[ServerConfig]]
 
     def __init__(self):
         load_dotenv()
 
-        self.ALEPH_API_URL = os.getenv("ALEPH_API_URL")
-        self.LTAI_SENDER_SK = os.getenv("ALEPH_SENDER_SK")
-        self.LTAI_SENDER_ADDRESS = os.getenv("ALEPH_SENDER_ADDRESS")
-        self.LTAI_AUTH_POST_CHANNEL = os.getenv("LTAI_AUTH_POST_CHANNEL", "libertai-auth")
-        self.LTAI_AUTH_POST_TYPE = os.getenv("LTAI_AUTH_POST_TYPE", "libertai-auth-keys")
-        self.LTAI_AUTH_METRICS_POST_TYPE = os.getenv("LTAI_AUTH_METRICS_POST_TYPE", "libertai-user-metrics")
-        self.LTAI_AUTH_METRICS_POST_CHANNEL = os.getenv("LTAI_AUTH_METRICS_POST_CHANNEL", "libertai-metrics")
-        self.LTAI_AUTH_REV_TAG = os.getenv("LTAI_AUTH_REV_TAG", "rev_001")
-
-        self.SUBSCRIPTION_POST_SENDER_ADDRESS = os.getenv("SUBSCRIPTION_POST_SENDER_ADDRESS")
-        self.SUBSCRIPTION_POST_TYPE = os.getenv("SUBSCRIPTION_POST_TYPE")
-        self.SUBSCRIPTION_POST_CHANNEL = os.getenv("SUBSCRIPTION_POST_CHANNEL")
         self.BACKEND_API_URL = os.getenv("BACKEND_API_URL")
         self.BACKEND_SECRET_TOKEN = os.getenv("BACKEND_SECRET_TOKEN")
+
+        # Load models configuration from environment variable or file
+        models_config = os.getenv("MODELS_CONFIG")
+        self.MODELS = {}
+
+        if models_config:
+            try:
+                with open(models_config) as f:
+                    models_data = json.load(f)
+                    print(models_data)
+                    for model_name, servers in models_data.items():
+                        self.MODELS[model_name.lower()] = [
+                            ServerConfig(
+                                type=server.get("type"),
+                                url=server.get("url"),
+                                weight=server.get("weight", 1),
+                                gpu=server.get("gpu", False),
+                                completion_path=server.get("completion_path"),
+                                api_type=server.get("api_type"),
+                                prompt_format=server.get("prompt_format")
+                            )
+                            for server in servers
+                        ]
+            except json.JSONDecodeError as error:
+                print(f"Error on {models_config} file")
+                print(error)
 
 
 config = _Config()
