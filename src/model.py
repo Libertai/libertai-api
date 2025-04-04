@@ -15,13 +15,17 @@ async def models_list():
     }
     for model_name in models:
         model = models[model_name][0]
-        print(model)
+        servers = []
+        for item in models[model_name]:
+            servers .append(item.url)
+
         data["models"].append(model_name)
         data["details"][model_name] = {
-            "url": model.url,
+            "url": "https://beta.api.libertai.io",
             "type": model.type,
             "api_type": model.api_type,
             "completion_path": model.completion_path,
             "prompt_format": model.prompt_format,
+            "servers": servers
         }
     return JSONResponse(content=data)
