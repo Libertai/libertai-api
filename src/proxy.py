@@ -36,6 +36,7 @@ class Usage(BaseModel):
     key: str
     input_tokens: int
     output_tokens: int
+    cached_tokens: int
     model_name: str
 
 
@@ -150,7 +151,7 @@ def extract_usage_info(response_json: Dict[str, Any]) -> Optional[Tuple[int, int
     return {
         "input_tokens": response_json.get("tokens_evaluated"),
         "output_tokens": response_json.get("tokens_predicted"),
-        "cached_tokens": response_json.get("tokens_cached")
+        "cached_tokens": 0
     }
 
 
