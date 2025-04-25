@@ -149,8 +149,8 @@ def extract_usage_info(response_json: Dict[str, Any]) -> Optional[Tuple[int, int
     """
 
     return {
-        "input_tokens": response_json.get("tokens_evaluated"),
-        "output_tokens": response_json.get("tokens_predicted"),
+        "input_tokens": int(response_json.get("tokens_evaluated")),
+        "output_tokens": int(response_json.get("tokens_predicted")),
         "cached_tokens": 0
     }
 
@@ -194,11 +194,7 @@ async def proxy_request(
             del headers["authorization"]
 
             # Forward the request to the selected server
-            path = server.completion_path
-            if "completion" not in full_path:
-                path = f"/{full_path}"
-
-            url = f"{server.url}{path}"
+            url = f"{server.url}/{full_path}"
             print(f"forward request to {url}, method: {request.method}, payload: {body}")
 
             async with session.request(

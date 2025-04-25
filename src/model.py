@@ -6,7 +6,7 @@ from src.config import config
 router = APIRouter(tags=["Auth service"])
 
 
-@router.get("/model/list")
+@router.get("/libertai/models")
 async def models_list():
     models = config.MODELS
     data = {
@@ -20,11 +20,12 @@ async def models_list():
             servers .append(item.url)
 
         data["models"].append(model_name)
+
         data["details"][model_name] = {
-            "url": "https://beta.api.libertai.io",
+            "url": "https://api.libertai.io",
             "type": model.type,
             "api_type": model.api_type,
-            "completion_path": model.completion_path,
+            "completion_path": model.completion_paths,
             "prompt_format": model.prompt_format,
             "servers": servers
         }

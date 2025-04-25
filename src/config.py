@@ -10,14 +10,14 @@ class ServerConfig:
     url: str
     weight: int
     gpu: bool
-    completion_path: str
+    completion_paths: str
     api_type: str
     prompt_format: str
 
-    def __init__(self, type: str, url: str, weight: int, gpu: bool, completion_path: str, api_type: str, prompt_format):
+    def __init__(self, type: str, url: str, weight: int, gpu: bool, completion_paths: str, api_type: str, prompt_format):
         self.type = type
         self.url = url
-        self.completion_path = completion_path
+        self.completion_paths = completion_paths
         self.api_type = api_type
         self.weight = weight
         self.gpu = gpu
@@ -51,7 +51,7 @@ class _Config:
                                 url=server.get("url"),
                                 weight=server.get("weight", 1),
                                 gpu=server.get("gpu", False),
-                                completion_path=server.get("completion_path"),
+                                completion_paths=server.get("completion_paths"),
                                 api_type=server.get("api_type"),
                                 prompt_format=server.get("prompt_format")
                             )

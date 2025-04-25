@@ -29,7 +29,9 @@ app = FastAPI(title="LibertAI backend service", lifespan=lifespan)
 
 origins = [
     "https://chat.libertai.io",
+    "https://console.libertai.io",
     "http://localhost:9000",
+    "http://localhost:8000",
     "https://bafybeid7ag5d4it32ylu5nkqw6lzsddtqzhhs3egu2pskwcadbz6jzmxby.ipfs.aleph.sh"
 ]
 

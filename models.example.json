@@ -1,13 +1,13 @@
 {
-  "hermes-3": [
+  "hermes-3-8b-tee": [
     {
-      "url": "https://curated.aleph.cloud/vm/84df52ac4466d121ef3bb409bb14f315de7be4ce600e8948d71df6485aa5bcc3",
+      "url": "https://hermes-8b-1.tee.api.libertai.io",
       "weight": 1,
       "gpu": false,
       "description": "Hermes 3 (Llama 3.1 8B fast)",
       "type": "text genration",
       "api_type": "Llama-like",
-      "completion_path": "/completion",
+      "completion_paths": ["/v1/completions", "/v1/chat/completions"],
       "prompt_format": {
         "format": "ChatML",
         "prompt": "<|im_start|>system Provide some context and/or instructions to the model.<|im_end|> <|im_start|>user The user’s message goes here<|im_end|> <|im_start|>assistant"

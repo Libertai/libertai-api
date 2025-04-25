@@ -10,7 +10,7 @@ router = APIRouter(tags=["Auth service"])
 keys_manager = KeysManager()
 security = HTTPBearer()
 
-@router.get("/auth/check")
+@router.get("/libertai/auth/check")
 async def check_auth(
         credentials: Annotated[
             HTTPAuthorizationCredentials,
