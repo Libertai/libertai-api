@@ -1,5 +1,6 @@
 import json
 import os
+
 from typing import Dict, List
 
 from dotenv import load_dotenv
@@ -36,8 +37,8 @@ class _Config:
 
         self.BACKEND_API_URL = os.getenv("BACKEND_API_URL")
         self.BACKEND_SECRET_TOKEN = os.getenv("BACKEND_SECRET_TOKEN")
-        self.REPORT_USAGE = bool(os.getenv("REPORT_USAGE", True))
-        self.FORWARD_AUTH = bool(os.getenv("FORWARD_AUTH", True))
+        self.REPORT_USAGE = os.getenv("REPORT_USAGE", "True").lower() == "true"
+        self.FORWARD_AUTH = os.getenv("FORWARD_AUTH", "True").lower() == "true"
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
