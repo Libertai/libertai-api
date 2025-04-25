@@ -149,9 +149,10 @@ def extract_usage_info(response_json: Dict[str, Any]) -> Optional[Tuple[int, int
         response_json: The JSON response from the server
     """
 
+    usage = response_json.get("usage")
     return {
-        "input_tokens": int(response_json.get("tokens_evaluated")),
-        "output_tokens": int(response_json.get("tokens_predicted")),
+        "input_tokens": int(usage.get("prompt_tokens")),
+        "output_tokens": int(usage.get("completion_tokens")),
         "cached_tokens": 0
     }
 
