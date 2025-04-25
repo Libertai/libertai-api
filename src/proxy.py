@@ -105,17 +105,18 @@ async def process_response(response: aiohttp.ClientResponse, user_context: UserC
             # Get response JSON to extract token counts
             response_json = await response.json()
 
-            # Extract usage information
-            try:
-                if background_tasks:
-                    usage = Usage.model_validate({
-                        **user_context.dict(),
-                        **extract_usage_info(response_json)
-                    })
+            if config.REPORT_USAGE:
+                # Extract usage information
+                try:
+                    if background_tasks:
+                        usage = Usage.model_validate({
+                            **user_context.dict(),
+                            **extract_usage_info(response_json)
+                        })
 
-                    background_tasks.add_task(report_usage_event_task, usage)
-            except Exception as e:
-                print(f"Exception occured during usage report {str(e)}")
+                        background_tasks.add_task(report_usage_event_task, usage)
+                except Exception as e:
+                    print(f"Exception occured during usage report {str(e)}")
 
             # Return processed JSON response
             return Response(
@@ -201,7 +202,7 @@ async def proxy_request(
                 method=request.method,
                 url=url,
                 json=body,
-                #headers=headers,
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
                 # Process and return the response
