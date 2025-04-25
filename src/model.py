@@ -10,17 +10,18 @@ router = APIRouter(tags=["Auth service"])
 async def models_list():
     models = config.MODELS
     data = {
-        "models": [],
-        "details": {}
     }
     for model_name in models:
-        model = models[model_name][0]
+        #model = models[model_name][0]
         servers = []
         for item in models[model_name]:
             servers .append(item.url)
 
-        data["models"].append(model_name)
+        data[model_name] = {
+            "servers": servers
+        }
 
+        """
         data["details"][model_name] = {
             "url": "https://api.libertai.io",
             "type": model.type,
@@ -29,4 +30,6 @@ async def models_list():
             "prompt_format": model.prompt_format,
             "servers": servers
         }
+        """
+        
     return JSONResponse(content=data)
