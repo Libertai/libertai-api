@@ -29,6 +29,7 @@ class _Config:
     BACKEND_SECRET_TOKEN: str | None
     MODELS: Dict[str, List[ServerConfig]]
     REPORT_USAGE: bool
+    FORWARD_AUTH: bool
 
     def __init__(self):
         load_dotenv()
@@ -36,6 +37,7 @@ class _Config:
         self.BACKEND_API_URL = os.getenv("BACKEND_API_URL")
         self.BACKEND_SECRET_TOKEN = os.getenv("BACKEND_SECRET_TOKEN")
         self.REPORT_USAGE = os.getenv("REPORT_USAGE", True)
+        self.FORWARD_AUTH = os.getenv("FORWARD_AUTH", True)
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")

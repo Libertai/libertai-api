@@ -187,13 +187,10 @@ async def proxy_request(
     # Forward the request to the selected server
     async with aiohttp.ClientSession() as session:
         try:
-            headers = dict(request.headers)
-
-            # Remove host header to avoid conflicts
-            if "host" in headers:
-                del headers["host"]
-            del headers["authorization"]
-
+            forwarded_headers = {}
+            if config.FORWARD_AUTH:
+                headers = dict(request.headers)
+                forwarded_headers["authorization"] = headers["authorization"]
             # Forward the request to the selected server
             url = f"{server.url}/{full_path}"
             print(f"forward request to {url}, method: {request.method}, payload: {body}")
@@ -202,7 +199,7 @@ async def proxy_request(
                 method=request.method,
                 url=url,
                 json=body,
-                headers=headers,
+                headers=forwarded_headers,
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
                 # Process and return the response
