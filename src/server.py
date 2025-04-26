@@ -15,15 +15,14 @@ keys_manager = KeysManager()
 
 async def run_jobs():
     while True:
-        await asyncio.sleep(30)
         await keys_manager.refresh_keys()
         await server_health_monitor.check_all_servers()
+        await asyncio.sleep(30)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Starting server...")
-    await keys_manager.refresh_keys()
     asyncio.create_task(run_jobs())
     yield
 

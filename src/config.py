@@ -1,33 +1,26 @@
 import json
 import os
-
 from typing import Dict, List
 
 from dotenv import load_dotenv
 
 
 class ServerConfig:
-    type: str
     url: str
     weight: int
     gpu: bool
     completion_paths: str
-    api_type: str
-    prompt_format: str
 
-    def __init__(self, type: str, url: str, weight: int, gpu: bool, completion_paths: str, api_type: str, prompt_format):
-        self.type = type
+    def __init__(self, url: str, weight: int, gpu: bool, completion_paths: str):
         self.url = url
         self.completion_paths = completion_paths
-        self.api_type = api_type
         self.weight = weight
         self.gpu = gpu
-        self.prompt_format = prompt_format
 
 
 class _Config:
-    BACKEND_API_URL: str | None
-    BACKEND_SECRET_TOKEN: str | None
+    BACKEND_API_URL: str
+    BACKEND_SECRET_TOKEN: str
     MODELS: Dict[str, List[ServerConfig]]
     REPORT_USAGE: bool
     FORWARD_AUTH: bool
@@ -52,13 +45,10 @@ class _Config:
                     for model_name, servers in models_data.items():
                         self.MODELS[model_name.lower()] = [
                             ServerConfig(
-                                type=server.get("type"),
                                 url=server.get("url"),
                                 weight=server.get("weight", 1),
                                 gpu=server.get("gpu", False),
                                 completion_paths=server.get("completion_paths"),
-                                api_type=server.get("api_type"),
-                                prompt_format=server.get("prompt_format")
                             )
                             for server in servers
                         ]

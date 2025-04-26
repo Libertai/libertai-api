@@ -64,6 +64,7 @@ def select_server(user_context: UserContext, prefer_gpu: bool = False) -> Option
 
     servers = config.MODELS[model]
     healthy_server_urls = server_health_monitor.get_healthy_servers()
+    print(f"Healthy URL: {healthy_server_urls}")
     # Filter out unhealthy servers
     servers = [server for server in servers if server.url in healthy_server_urls]
 
@@ -95,7 +96,7 @@ def select_server(user_context: UserContext, prefer_gpu: bool = False) -> Option
 
 
 async def process_response(
-    response: aiohttp.ClientResponse, user_context: UserContext, background_tasks: BackgroundTasks | None = None
+    response: aiohttp.ClientResponse, user_context: UserContext, background_tasks: BackgroundTasks = None
 ) -> Union[Response, StreamingResponse]:
     """
     Process the response from the upstream server and extract token information.
@@ -171,7 +172,7 @@ async def proxy_request(
     request: Request,
     proxy_request: ProxyRequest,
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
-    background_tasks: BackgroundTasks | None = None,
+    background_tasks: BackgroundTasks = None,
 ):
     token = credentials.credentials
     if not keys_manager.key_exists(token):
