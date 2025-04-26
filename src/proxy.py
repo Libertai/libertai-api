@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from src.api_keys import KeysManager
 from src.config import ServerConfig, config
+from src.health import server_health_monitor
 from src.tasks import report_usage_event_task
 
 router = APIRouter(tags=["Proxy service"])
@@ -50,7 +51,7 @@ def select_server(user_context: UserContext, prefer_gpu: bool = False) -> Option
     Select a server based on weights and GPU preference.
 
     Args:
-        model: The model name to route to
+        user_context: Context
         prefer_gpu: Whether to prefer GPU servers
 
     Returns:
@@ -62,6 +63,12 @@ def select_server(user_context: UserContext, prefer_gpu: bool = False) -> Option
         return None
 
     servers = config.MODELS[model]
+    healthy_server_urls = server_health_monitor.get_healthy_servers()
+    # Filter out unhealthy servers
+    servers = [server for server in servers if server.url in healthy_server_urls]
+
+    if not servers:
+        return None
 
     # Filter by GPU if preferred
     if prefer_gpu:
@@ -87,12 +94,16 @@ def select_server(user_context: UserContext, prefer_gpu: bool = False) -> Option
     return servers[-1]  # Fallback to last server
 
 
-async def process_response(response: aiohttp.ClientResponse, user_context: UserContext, background_tasks: BackgroundTasks = None) -> Union[Response, StreamingResponse]:
+async def process_response(
+    response: aiohttp.ClientResponse, user_context: UserContext, background_tasks: BackgroundTasks | None = None
+) -> Union[Response, StreamingResponse]:
     """
     Process the response from the upstream server and extract token information.
 
     Args:
         response: The response from the upstream server
+        user_context: Context
+        background_tasks: Tasks
 
     Returns:
         Either a Response or StreamingResponse object with the processed data
@@ -109,10 +120,7 @@ async def process_response(response: aiohttp.ClientResponse, user_context: UserC
                 # Extract usage information
                 try:
                     if background_tasks:
-                        usage = Usage.model_validate({
-                            **user_context.dict(),
-                            **extract_usage_info(response_json)
-                        })
+                        usage = Usage.model_validate({**user_context.dict(), **extract_usage_info(response_json)})
 
                         background_tasks.add_task(report_usage_event_task, usage)
                 except Exception as e:
@@ -123,7 +131,7 @@ async def process_response(response: aiohttp.ClientResponse, user_context: UserC
                 content=await response.read(),
                 status_code=response.status,
                 headers=response.headers,
-                media_type=content_type
+                media_type=content_type,
             )
         except Exception:
             # If JSON parsing fails, fall back to streaming
@@ -153,7 +161,7 @@ def extract_usage_info(response_json: Dict[str, Any]) -> Optional[Tuple[int, int
     return {
         "input_tokens": int(usage.get("prompt_tokens")),
         "output_tokens": int(usage.get("completion_tokens")),
-        "cached_tokens": 0
+        "cached_tokens": 0,
     }
 
 
@@ -162,11 +170,8 @@ async def proxy_request(
     full_path: str,
     request: Request,
     proxy_request: ProxyRequest,
-    credentials: Annotated[
-        HTTPAuthorizationCredentials,
-        Depends(security)
-    ],
-    background_tasks: BackgroundTasks = None
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    background_tasks: BackgroundTasks | None = None,
 ):
     token = credentials.credentials
     if not keys_manager.key_exists(token):
@@ -201,7 +206,7 @@ async def proxy_request(
                 url=url,
                 json=body,
                 headers=forwarded_headers,
-                timeout=aiohttp.ClientTimeout(total=30)
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 # Process and return the response
                 return await process_response(response, user_context, background_tasks)
