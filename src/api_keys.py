@@ -42,7 +42,7 @@ class KeysManager:
         return cls._instance
 
     def __init__(self):
-        if not hasattr(self, 'initialized'):  # Check if already initialized
+        if not hasattr(self, "initialized"):  # Check if already initialized
             self.keys = set()
 
     def add_keys(self, keys):
@@ -52,6 +52,4 @@ class KeysManager:
         return key in self.keys
 
     async def refresh_keys(self):
-        print("Refreshing keys...")
         self.keys = await get_active_keys()
-        print(f"{len(self.keys)} keys added")
