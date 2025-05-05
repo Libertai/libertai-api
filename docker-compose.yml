@@ -2,8 +2,8 @@ services:
   auth:
     build:
       dockerfile: ./Dockerfile
-    image: libertai-auth
-    container_name: libertai-auth
+    image: libertai-api
+    container_name: libertai-api
     restart: unless-stopped
     volumes:
       - ./data:/data
