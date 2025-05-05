@@ -21,7 +21,7 @@ async def run_jobs():
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     print("Starting server...")
     asyncio.create_task(run_jobs())
     yield

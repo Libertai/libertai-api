@@ -19,7 +19,8 @@ class ServerHealthMonitor:
         """Get the set of currently healthy servers."""
         return self.healthy_servers
 
-    async def check_server_health_async(self, url: str) -> bool:
+    @staticmethod
+    async def check_server_health_async(url: str) -> bool:
         """
         Asynchronously check if a server is responding.
 

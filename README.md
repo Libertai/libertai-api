@@ -1,1 +1,1 @@
-# libertai-backend
+# libertai-api
