@@ -1,17 +1,16 @@
 import random
 from http import HTTPStatus
-from typing import Annotated, Optional, Union
+from typing import Optional, Union
 
 import aiohttp
 from fastapi import (
     APIRouter,
-    Depends,
     HTTPException,
     Request,
     Response,
 )
 from fastapi.responses import StreamingResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 
 from src.api_keys import KeysManager
@@ -121,12 +120,7 @@ async def proxy_request(
     full_path: str,
     request: Request,
     proxy_request_data: ProxyRequest,
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
 ):
-    token = credentials.credentials
-    if not keys_manager.key_exists(token):
-        return HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Invalid API key")
-
     # Get model from request
     model_name = proxy_request_data.model
 

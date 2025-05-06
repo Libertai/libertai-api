@@ -1,27 +1,21 @@
 import json
 import os
-from typing import Dict, List
 
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 
-class ServerConfig:
+class ServerConfig(BaseModel):
     url: str
-    weight: int
-    gpu: bool
-    completion_paths: str
-
-    def __init__(self, url: str, weight: int, gpu: bool, completion_paths: str):
-        self.url = url
-        self.completion_paths = completion_paths
-        self.weight = weight
-        self.gpu = gpu
+    weight: int = 1
+    gpu: bool = False
+    completion_paths: list[str]
 
 
 class _Config:
     BACKEND_API_URL: str
     BACKEND_SECRET_TOKEN: str
-    MODELS: Dict[str, List[ServerConfig]]
+    MODELS: dict[str, list[ServerConfig]]
 
     def __init__(self):
         load_dotenv()
@@ -38,15 +32,7 @@ class _Config:
                 with open(models_config) as f:
                     models_data = json.load(f)
                     for model_name, servers in models_data.items():
-                        self.MODELS[model_name.lower()] = [
-                            ServerConfig(
-                                url=server.get("url"),
-                                weight=server.get("weight", 1),
-                                gpu=server.get("gpu", False),
-                                completion_paths=server.get("completion_paths"),
-                            )
-                            for server in servers
-                        ]
+                        self.MODELS[model_name.lower()] = [ServerConfig(**server) for server in servers]
             except json.JSONDecodeError as error:
                 print(f"Error on {models_config} file")
                 print(error)
