@@ -1,14 +1,6 @@
 import aiohttp
-from pydantic import BaseModel
 
 from src.config import config
-
-
-class ApiKey(BaseModel):
-    key: str
-
-    def __hash__(self) -> str:
-        return self.key.lower().__hash__()
 
 
 async def get_active_keys() -> set:
