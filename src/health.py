@@ -1,5 +1,4 @@
 import asyncio
-from typing import List, Set
 
 import aiohttp
 
@@ -11,13 +10,17 @@ class ServerHealthMonitor:
         """
         Initialize the health monitor for LLM servers.
         """
-        self.server_urls: List[str] = [server.url for servers in config.MODELS.values() for server in servers]
-        self.healthy_servers: Set[str] = set()
-        self.timeout = 1  # Default timeout for health checks
+        # Map of model name to list of URL strings
+        self.model_urls: dict[str, list[str]] = {
+            model: [server.url for server in servers] for model, servers in config.MODELS.items()
+        }
 
-    def get_healthy_servers(self) -> Set[str]:
-        """Get the set of currently healthy servers."""
-        return self.healthy_servers
+        # Map of model name to list of healthy URL strings
+        self.healthy_model_urls: dict[str, list[str]] = {model: [] for model in config.MODELS}
+
+    def get_healthy_model_urls(self) -> dict[str, list[str]]:
+        """Get a dictionary of healthy servers grouped by model."""
+        return self.healthy_model_urls
 
     @staticmethod
     async def check_server_health_async(url: str) -> bool:
@@ -38,18 +41,19 @@ class ServerHealthMonitor:
             return False
 
     async def check_all_servers(self) -> None:
-        """Check health of all registered servers."""
-        tasks = []
+        """Check health of all registered servers and update healthy URLs per model."""
+        # Reset health status for all models
+        self.healthy_model_urls = {model: [] for model in self.model_urls}
 
-        for url in self.server_urls:
-            # Only check if enough time has passed since last check
-            tasks.append(self.check_server_health_async(url))
+        # Check each model's servers
+        for model, urls in self.model_urls.items():
+            tasks = [self.check_server_health_async(url) for url in urls]
 
-        if tasks:
-            results = await asyncio.gather(*tasks)
+            if tasks:
+                results = await asyncio.gather(*tasks)
 
-            # Update healthy servers set with URLs that are healthy
-            self.healthy_servers = {url for i, url in enumerate(self.server_urls) if i < len(results) and results[i]}
+                # Update healthy servers for this model
+                self.healthy_model_urls[model] = [url for i, url in enumerate(urls) if i < len(results) and results[i]]
 
 
 server_health_monitor = ServerHealthMonitor()

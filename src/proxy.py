@@ -47,10 +47,15 @@ def select_server(model_name: str, prefer_gpu: bool = False) -> Optional[ServerC
         return None
 
     servers = config.MODELS[model]
-    healthy_server_urls = server_health_monitor.get_healthy_servers()
-    print(f"Healthy URLs: {healthy_server_urls}")
+    healthy_model_urls = server_health_monitor.get_healthy_model_urls()
+
+    # Check if there are any healthy servers for this model
+    if model not in healthy_model_urls or not healthy_model_urls[model]:
+        return None
+
+    print(f"Healthy URLs: {healthy_model_urls[model]}")
     # Filter out unhealthy servers
-    servers = [server for server in servers if server.url in healthy_server_urls]
+    servers = [server for server in servers if server.url in healthy_model_urls[model]]
 
     if not servers:
         return None
