@@ -16,7 +16,9 @@ class ServerHealthMonitor:
         }
 
         # Map of model name to list of healthy URL strings
-        self.healthy_model_urls: dict[str, list[str]] = {model: [] for model in config.MODELS}
+        self.healthy_model_urls: dict[str, list[str]] = {
+            model: [server.url for server in servers] for model, servers in config.MODELS.items()
+        }
 
     def get_healthy_model_urls(self) -> dict[str, list[str]]:
         """Get a dictionary of healthy servers grouped by model."""
