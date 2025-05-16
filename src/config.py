@@ -16,12 +16,18 @@ class _Config:
     BACKEND_API_URL: str
     BACKEND_SECRET_TOKEN: str
     MODELS: dict[str, list[ServerConfig]]
+    TELEGRAM_BOT_TOKEN: str
+    TELEGRAM_CHAT_ID: str
+    TELEGRAM_TOPIC_ID: str
 
     def __init__(self):
         load_dotenv()
 
         self.BACKEND_API_URL = os.getenv("BACKEND_API_URL")
         self.BACKEND_SECRET_TOKEN = os.getenv("BACKEND_SECRET_TOKEN")
+        self.TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        self.TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+        self.TELEGRAM_TOPIC_ID = os.getenv("TELEGRAM_TOPIC_ID", "")
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
