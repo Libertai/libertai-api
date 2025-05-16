@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,21 +10,42 @@ from src.auth import router as auth_router
 from src.health import server_health_monitor
 from src.model import router as model_router
 from src.proxy import router as proxy_router
+from src.telegram import telegram_reporter
 
 keys_manager = KeysManager()
+logger = logging.getLogger(__name__)
+
+# Constants
+HEALTH_CHECK_INTERVAL = 30  # seconds
+TELEGRAM_REPORT_INTERVAL = 3600  # seconds (1 hour)
 
 
 async def run_jobs():
+    """Run periodic jobs for key refresh and health checks."""
     while True:
         await keys_manager.refresh_keys()
         await server_health_monitor.check_all_servers()
-        await asyncio.sleep(30)
+        await asyncio.sleep(HEALTH_CHECK_INTERVAL)
+
+
+async def run_telegram_reporting():
+    """Run hourly Telegram health reporting."""
+    while True:
+        try:
+            await telegram_reporter.send_health_report()
+        except Exception as e:
+            logger.error(f"Error in Telegram reporting: {e}")
+        
+        # Sleep until the next hour
+        await asyncio.sleep(TELEGRAM_REPORT_INTERVAL)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     print("Starting server...")
+    # Start background tasks
     asyncio.create_task(run_jobs())
+    asyncio.create_task(run_telegram_reporting())
     yield
 
 
