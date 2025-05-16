@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 HEALTH_CHECK_INTERVAL = 30  # seconds
-TELEGRAM_REPORT_INTERVAL = 3600  # seconds (1 hour)
+TELEGRAM_REPORT_INTERVAL = 1800  # 30 minutes
 
 
 async def run_jobs():
@@ -35,7 +35,7 @@ async def run_telegram_reporting():
             await telegram_reporter.send_health_report()
         except Exception as e:
             logger.error(f"Error in Telegram reporting: {e}")
-        
+
         # Sleep until the next hour
         await asyncio.sleep(TELEGRAM_REPORT_INTERVAL)
 
