@@ -170,7 +170,7 @@ class TelegramReporter:
 
             # List unhealthy URLs by model
             for model, urls in unhealthy_urls_by_model.items():
-                message += f"*Model: {model}*\n"
+                message += f"*Model: {model}* ({len(urls)} / {len(server_health_monitor.model_urls[model])})\n"
                 for url in urls:
                     message += f"- `{url}`\n"
                 message += "\n"
