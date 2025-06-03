@@ -44,8 +44,7 @@ class ServerHealthMonitor:
 
     async def check_all_servers(self) -> None:
         """Check health of all registered servers and update healthy URLs per model."""
-        # Reset health status for all models
-        self.healthy_model_urls = {model: [] for model in self.model_urls}
+        new_healthy_model_urls: dict[str, list[str]] = {model: [] for model in self.model_urls}
 
         # Check each model's servers
         for model, urls in self.model_urls.items():
@@ -55,7 +54,8 @@ class ServerHealthMonitor:
                 results = await asyncio.gather(*tasks)
 
                 # Update healthy servers for this model
-                self.healthy_model_urls[model] = [url for i, url in enumerate(urls) if i < len(results) and results[i]]
+                new_healthy_model_urls[model] = [url for i, url in enumerate(urls) if i < len(results) and results[i]]
+        self.healthy_model_urls = new_healthy_model_urls
 
 
 server_health_monitor = ServerHealthMonitor()
