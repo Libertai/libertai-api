@@ -1,4 +1,5 @@
 import asyncio
+from http import HTTPStatus
 
 import aiohttp
 
@@ -38,7 +39,9 @@ class ServerHealthMonitor:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as response:
-                    return response.status < 500  # server responded, not a server error
+                    if response.status == HTTPStatus.METHOD_NOT_ALLOWED:
+                        return True  # Method not allowed but server is up
+                    return False
         except (aiohttp.ClientError, asyncio.TimeoutError):
             return False
 
