@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,12 +7,13 @@ from starlette.middleware.cors import CORSMiddleware
 from src.api_keys import KeysManager
 from src.auth import router as auth_router
 from src.health import server_health_monitor
+from src.logger import setup_logger
 from src.model import router as model_router
 from src.proxy import router as proxy_router
 from src.telegram import telegram_reporter
 
 keys_manager = KeysManager()
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 # Constants
 HEALTH_CHECK_INTERVAL = 30  # seconds

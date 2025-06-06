@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -20,6 +21,9 @@ class _Config:
     TELEGRAM_CHAT_ID: str
     TELEGRAM_TOPIC_ID: str
 
+    LOG_LEVEL: int
+    LOG_FILE: str | None
+
     def __init__(self):
         load_dotenv()
 
@@ -32,6 +36,11 @@ class _Config:
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
         self.MODELS = {}
+
+        # Configure logging
+        log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
+        self.LOG_LEVEL = getattr(logging, log_level_str, logging.INFO)
+        self.LOG_FILE = os.getenv("LOG_FILE", None)
 
         if models_config:
             try:

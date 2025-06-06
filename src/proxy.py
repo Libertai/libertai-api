@@ -16,10 +16,13 @@ from pydantic import BaseModel
 from src.api_keys import KeysManager
 from src.config import ServerConfig, config
 from src.health import server_health_monitor
+from src.logger import setup_logger
 
 router = APIRouter(tags=["Proxy service"])
 keys_manager = KeysManager()
 security = HTTPBearer()
+
+logger = setup_logger(__name__)
 
 
 class ProxyRequest(BaseModel):
@@ -127,6 +130,8 @@ async def proxy_request(
 ):
     # Get model from request
     model_name = proxy_request_data.model
+
+    logger.debug(f"Received proxy request to {full_path} for model {model_name}")
 
     # Select server
     server = select_server(model_name, proxy_request_data.prefer_gpu)

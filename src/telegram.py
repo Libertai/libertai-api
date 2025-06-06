@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from datetime import datetime
 
 from telegram import Bot, Update
@@ -8,8 +7,9 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 from src.config import config
 from src.health import server_health_monitor
+from src.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class TelegramReporter:
