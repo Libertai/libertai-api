@@ -1,31 +1,8 @@
 {
   "hermes-3-8b-tee": [
     {
-      "url": "http://[2a01:e0a:8b1:95e0:be24:11ff:fe32:eff9]:8000",
-      "weight": 1,
-      "gpu": false,
-      "completion_paths": [
-        "/v1/completions",
-        "/v1/chat/completions"
-      ]
-    },
-    {
-      "url": "https://hermes-8b-1.tee.api.libertai.io",
-      "weight": 1,
-      "gpu": false,
-      "completion_paths": [
-        "/v1/completions",
-        "/v1/chat/completions"
-      ]
-    },
-    {
-      "url": "https://hermes-8b-2.tee.api.libertai.io",
-      "weight": 1,
-      "gpu": false,
-      "completion_paths": [
-        "/v1/completions",
-        "/v1/chat/completions"
-      ]
+      "url": "http://localhost:8000",
+      "weight": 1
     }
   ]
 }

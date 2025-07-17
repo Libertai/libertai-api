@@ -9,8 +9,6 @@ from pydantic import BaseModel
 class ServerConfig(BaseModel):
     url: str
     weight: int = 1
-    gpu: bool = False
-    completion_paths: list[str]
 
 
 class _Config:
