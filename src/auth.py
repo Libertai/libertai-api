@@ -6,17 +6,13 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.api_keys import KeysManager
 
-router = APIRouter(tags=["Auth service"])
+router = APIRouter(tags=["Auth"])
 keys_manager = KeysManager()
 security = HTTPBearer()
 
+
 @router.get("/libertai/auth/check")
-async def check_auth(
-        credentials: Annotated[
-            HTTPAuthorizationCredentials,
-            Depends(security)
-        ]
-):
+async def check_auth(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     token = credentials.credentials
     if keys_manager.key_exists(token):
         return Response(content="OK", status_code=HTTPStatus.OK)

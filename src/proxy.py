@@ -12,7 +12,7 @@ from src.config import ServerConfig, config
 from src.health import server_health_monitor
 from src.logger import setup_logger
 
-router = APIRouter(tags=["Proxy service"])
+router = APIRouter(tags=["Proxy"])
 keys_manager = KeysManager()
 security = HTTPBearer()
 
