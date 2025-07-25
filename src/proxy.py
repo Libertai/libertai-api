@@ -1,9 +1,10 @@
+import json
 import random
 from http import HTTPStatus
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response, Cookie
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 
@@ -28,12 +29,13 @@ class ProxyRequest(BaseModel):
         extra = "allow"  # Allow extra fields
 
 
-def select_server(model_name: str) -> Optional[ServerConfig]:
+def select_server(model_name: str, preferred_server: str | None) -> Optional[ServerConfig]:
     """
     Select a server based on weights.
 
     Args:
         model_name: Name of the model to use
+        preferred_server: Optional preferred server URL
 
     Returns:
         Selected server or None if no servers available
@@ -55,6 +57,11 @@ def select_server(model_name: str) -> Optional[ServerConfig]:
 
     if not servers:
         return None
+
+    if preferred_server is not None and preferred_server in healthy_model_urls[model]:
+        # If a preferred server is specified, and it is healthy, return it
+        logger.debug(f"Using preferred server: {preferred_server}")
+        return ServerConfig(url=preferred_server, weight=1)
 
     # Calculate total weight
     total_weight = sum(server.weight for server in servers)
@@ -79,14 +86,22 @@ async def proxy_request(
     full_path: str,
     request: Request,
     proxy_request_data: ProxyRequest,
+    preferred_instances: str = Cookie(default="{}"),  # JSON-encoded map
 ):
     # Get model from request
     model_name = proxy_request_data.model
 
     logger.debug(f"Received proxy request to {full_path} for model {model_name}")
 
+    try:
+        preferred_instances_map = json.loads(preferred_instances)
+    except json.JSONDecodeError:
+        preferred_instances_map = {}
+
+    preferred_server: str | None = preferred_instances_map.get(model_name)
+
     # Select server
-    server = select_server(model_name)
+    server = select_server(model_name, preferred_server)
     if not server:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
@@ -114,9 +129,19 @@ async def proxy_request(
                 status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"Error forwarding request: {str(e)}"
             )
 
-    return Response(
+    proxy_response = Response(
         content=response.content,
         status_code=response.status_code,
         headers=dict(response.headers),
         media_type=response.headers.get("content-type"),
     )
+
+    # Update or set the preferred instance for this model
+    preferred_instances_map[model_name] = server.url
+    updated_cookie_value = json.dumps(preferred_instances_map)
+
+    proxy_response.set_cookie(
+        key="preferred_instances", value=updated_cookie_value, max_age=1800, httponly=True, secure=True, samesite="lax"
+    )
+
+    return proxy_response

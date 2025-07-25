@@ -39,7 +39,7 @@ class ServerHealthMonitor:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as response:
-                    if response.status == HTTPStatus.METHOD_NOT_ALLOWED:
+                    if response.status in [HTTPStatus.METHOD_NOT_ALLOWED, HTTPStatus.OK]:
                         return True  # Method not allowed but server is up
                     return False
         except (aiohttp.ClientError, asyncio.TimeoutError):
