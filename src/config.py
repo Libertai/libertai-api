@@ -18,6 +18,7 @@ class _Config:
     TELEGRAM_BOT_TOKEN: str
     TELEGRAM_CHAT_ID: str
     TELEGRAM_TOPIC_ID: str
+    PRIVATE_KEY: str
 
     LOG_LEVEL: int
     LOG_FILE: str | None
@@ -30,6 +31,7 @@ class _Config:
         self.TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
         self.TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
         self.TELEGRAM_TOPIC_ID = os.getenv("TELEGRAM_TOPIC_ID", "")
+        self.PRIVATE_KEY = os.getenv("PRIVATE_KEY", "")
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
