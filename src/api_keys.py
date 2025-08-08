@@ -2,6 +2,9 @@ import aiohttp
 
 from src.config import config
 from src.cryptography import create_signed_payload
+from src.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 async def get_active_keys() -> set:
@@ -60,7 +63,7 @@ async def distribute_keys_to_clients():
     for servers in config.MODELS.values():
         for server in servers:
             # Add the libertai endpoint to each server URL
-            client_endpoint = f"{server.url}/libertai/api-keys"
+            client_endpoint = f"{server}/libertai/api-keys"
             client_endpoints.add(client_endpoint)
 
     # Get the current keys
@@ -75,6 +78,9 @@ async def distribute_keys_to_clients():
         # Send to all client endpoints
         async with aiohttp.ClientSession() as session:
             for endpoint in client_endpoints:
+                # TODO: remove when all servers support /libertai/api-keys
+                if "gemma" in endpoint:
+                    continue
                 try:
                     async with session.post(
                         endpoint, json=payload, headers={"Content-Type": "application/json"}
@@ -82,10 +88,8 @@ async def distribute_keys_to_clients():
                         if response.status == 200:
                             await response.json()
                         else:
-                            # TODO: use logger and enable this when all backends are ready
-                            # error_text = await response.text()
-                            # print(f"Error sending keys to {endpoint}: {response.status} - {error_text}")
-                            pass
+                            error_text = await response.text()
+                            logger.error(f"Error sending keys to {endpoint}: {response.status} - {error_text}")
                 except Exception as e:
                     print(f"Exception sending keys to {endpoint}: {e}")
 

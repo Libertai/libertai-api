@@ -1,8 +1,5 @@
 {
   "hermes-3-8b-tee": [
-    {
-      "url": "http://localhost:8000",
-      "weight": 1
-    }
+    "http://localhost:8001"
   ]
 }

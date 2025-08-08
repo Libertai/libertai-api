@@ -3,18 +3,12 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
-
-
-class ServerConfig(BaseModel):
-    url: str
-    weight: int = 1
 
 
 class _Config:
     BACKEND_API_URL: str
     BACKEND_SECRET_TOKEN: str
-    MODELS: dict[str, list[ServerConfig]]
+    MODELS: dict[str, list[str]]
     TELEGRAM_BOT_TOKEN: str
     TELEGRAM_CHAT_ID: str
     TELEGRAM_TOPIC_ID: str
@@ -47,7 +41,7 @@ class _Config:
                 with open(models_config) as f:
                     models_data = json.load(f)
                     for model_name, servers in models_data.items():
-                        self.MODELS[model_name.lower()] = [ServerConfig(**server) for server in servers]
+                        self.MODELS[model_name.lower()] = servers
             except json.JSONDecodeError as error:
                 print(f"Error on {models_config} file")
                 print(error)

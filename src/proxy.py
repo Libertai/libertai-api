@@ -1,7 +1,5 @@
 import json
-import random
 from http import HTTPStatus
-from typing import Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response, Cookie
@@ -9,7 +7,7 @@ from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 
 from src.api_keys import KeysManager
-from src.config import ServerConfig, config
+from src.config import config
 from src.health import server_health_monitor
 from src.logger import setup_logger
 
@@ -27,58 +25,6 @@ class ProxyRequest(BaseModel):
 
     class Config:
         extra = "allow"  # Allow extra fields
-
-
-def select_server(model_name: str, preferred_server: str | None) -> Optional[ServerConfig]:
-    """
-    Select a server based on weights.
-
-    Args:
-        model_name: Name of the model to use
-        preferred_server: Optional preferred server URL
-
-    Returns:
-        Selected server or None if no servers available
-    """
-
-    model = model_name.lower()
-    if model not in config.MODELS or not config.MODELS[model]:
-        return None
-
-    servers = config.MODELS[model]
-    healthy_model_urls = server_health_monitor.get_healthy_model_urls()
-
-    # Check if there are any healthy servers for this model
-    if model not in healthy_model_urls or not healthy_model_urls[model]:
-        return None
-
-    # Filter out unhealthy servers
-    servers = [server for server in servers if server.url in healthy_model_urls[model]]
-
-    if not servers:
-        return None
-
-    if preferred_server is not None and preferred_server in healthy_model_urls[model]:
-        # If a preferred server is specified, and it is healthy, return it
-        logger.debug(f"Using preferred server: {preferred_server}")
-        return ServerConfig(url=preferred_server, weight=1)
-
-    # Calculate total weight
-    total_weight = sum(server.weight for server in servers)
-
-    if total_weight == 0:
-        return random.choice(servers)
-
-    # Select based on weight
-    r = random.uniform(0, total_weight)
-    current_weight = 0
-
-    for server in servers:
-        current_weight += server.weight
-        if r <= current_weight:
-            return server
-
-    return servers[-1]  # Fallback to last server
 
 
 @router.post("/{full_path:path}")
@@ -100,8 +46,13 @@ async def proxy_request(
 
     preferred_server: str | None = preferred_instances_map.get(model_name)
 
-    # Select server
-    server = select_server(model_name, preferred_server)
+    model = model_name.lower()
+    if model not in config.MODELS or not config.MODELS[model]:
+        return None
+
+    # Select server from the health and metrics monitoring
+    server = server_health_monitor.get_least_busy_server(model, preferred_server)
+
     if not server:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
@@ -119,7 +70,7 @@ async def proxy_request(
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             # Forward the request to the selected server
-            url = f"{server.url}/{full_path}"
+            url = f"{server}/{full_path}"
 
             response: httpx.Response = await client.post(
                 url, content=body, headers=headers, params=request.query_params
@@ -137,7 +88,7 @@ async def proxy_request(
     )
 
     # Update or set the preferred instance for this model
-    preferred_instances_map[model_name] = server.url
+    preferred_instances_map[model_name] = server
     updated_cookie_value = json.dumps(preferred_instances_map)
 
     proxy_response.set_cookie(
