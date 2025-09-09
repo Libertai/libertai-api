@@ -1,5 +1,5 @@
 services:
-  auth:
+  api:
     build:
       dockerfile: ./Dockerfile
     image: libertai-api
