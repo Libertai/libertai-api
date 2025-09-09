@@ -3,6 +3,7 @@ from http import HTTPStatus
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response, Cookie
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 
@@ -16,6 +17,13 @@ keys_manager = KeysManager()
 security = HTTPBearer()
 
 timeout = httpx.Timeout(timeout=600.0)  # 10 minutes
+client = httpx.AsyncClient(timeout=timeout)
+
+
+@router.on_event("shutdown")
+async def shutdown_event():
+    await client.aclose()
+
 
 logger = setup_logger(__name__)
 
@@ -66,33 +74,55 @@ async def proxy_request(
     # Clean up headers
     headers.pop("host", None)
 
-    # Forward the request
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            # Forward the request to the selected server
-            url = f"{server}/{full_path}"
+    # Forward the request to the selected server
+    url = f"{server}/{full_path}"
 
-            response: httpx.Response = await client.post(
-                url, content=body, headers=headers, params=request.query_params
+    try:
+        req = client.build_request("POST", url, content=body, headers=headers, params=request.query_params)
+        response = await client.send(req, stream=True)
+        response.raise_for_status()
+
+        # Update the preferred instances map and create the cookie header
+        preferred_instances_map[model_name] = server
+        updated_cookie_value = json.dumps(preferred_instances_map)
+
+        # Build the Set-Cookie header string manually
+        cookie_header = (
+            f"preferred_instances={updated_cookie_value}; Max-Age=1800; Path=/; HttpOnly; Secure; SameSite=Lax"
+        )
+
+        # Copy original headers and add the Set-Cookie header
+        response_headers = dict(response.headers)
+        response_headers["set-cookie"] = cookie_header
+
+        is_streaming_response = response.headers.get("content-type", "") == "text/event-stream"
+
+        if is_streaming_response:
+
+            async def generate_chunks():
+                try:
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+                finally:
+                    await response.aclose()
+
+            return StreamingResponse(
+                content=generate_chunks(),
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.headers.get("Content-Type", ""),
             )
-        except Exception as e:
-            raise HTTPException(
-                status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"Error forwarding request: {str(e)}"
+        else:
+            response_bytes = await response.aread()
+            await response.aclose()
+
+            return Response(
+                content=response_bytes,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.headers.get("Content-Type", ""),
             )
 
-    proxy_response = Response(
-        content=response.content,
-        status_code=response.status_code,
-        headers=dict(response.headers),
-        media_type=response.headers.get("content-type"),
-    )
-
-    # Update or set the preferred instance for this model
-    preferred_instances_map[model_name] = server
-    updated_cookie_value = json.dumps(preferred_instances_map)
-
-    proxy_response.set_cookie(
-        key="preferred_instances", value=updated_cookie_value, max_age=1800, httponly=True, secure=True, samesite="lax"
-    )
-
-    return proxy_response
+    except Exception as e:
+        print(f"Error forwarding request: {e}")
+        raise HTTPException(status_code=500, detail=f"Error forwarding request: {str(e)}")
