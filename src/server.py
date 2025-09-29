@@ -49,7 +49,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="LibertAI backend service", lifespan=lifespan)
+app = FastAPI(title="LibertAI API", lifespan=lifespan)
 
 
 app.add_middleware(
