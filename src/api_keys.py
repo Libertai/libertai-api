@@ -7,7 +7,7 @@ from src.logger import setup_logger
 logger = setup_logger(__name__)
 
 
-async def get_active_keys() -> set:
+async def get_active_keys() -> set | None:
     keys = set()
 
     try:
@@ -19,12 +19,12 @@ async def get_active_keys() -> set:
                     data = await response.json()
                     keys.update(data.get("keys"))
                 else:
-                    print(f"Error fetching accounts: {response.status}")
-                    return keys
+                    logger.error(f"Error fetching accounts: {response.status}")
+                    return None
 
     except Exception as e:
-        print(f"Exception fetching accounts {str(e)}")
-        return keys
+        logger.error(f"Exception fetching accounts {str(e)}")
+        return None
 
     return keys
 
@@ -45,7 +45,9 @@ class KeysManager:
         return key in self.keys
 
     async def refresh_keys(self):
-        self.keys = await get_active_keys()
+        new_keys = await get_active_keys()
+        if new_keys is not None:
+            self.keys = new_keys
         # Also distribute keys to client servers
         await distribute_keys_to_clients()
 
@@ -75,9 +77,6 @@ async def distribute_keys_to_clients():
         # Send to all client endpoints
         async with aiohttp.ClientSession() as session:
             for endpoint in client_endpoints:
-                # TODO: remove when all servers support /libertai/api-keys
-                if "gemma" in endpoint:
-                    continue
                 try:
                     async with session.post(
                         endpoint, json=payload, headers={"Content-Type": "application/json"}
@@ -88,7 +87,7 @@ async def distribute_keys_to_clients():
                             error_text = await response.text()
                             logger.error(f"Error sending keys to {endpoint}: {response.status} - {error_text}")
                 except Exception as e:
-                    print(f"Exception sending keys to {endpoint}: {e}")
+                    logger.error(f"Exception sending keys to {endpoint}: {e}")
 
     except Exception as e:
-        print(f"Error creating signed payload: {e}")
+        logger.error(f"Error creating signed payload: {e}")

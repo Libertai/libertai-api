@@ -123,11 +123,6 @@ class ServerHealthMonitor:
             ServerMetrics object with health status and load information
         """
         try:
-            # TODO: remove when all servers support /metrics
-            if "gemma" in url:
-                is_healthy = await ServerHealthMonitor.old_check_health(url)
-                return ServerMetrics(is_healthy=is_healthy)
-
             metrics_url = f"{url}/metrics"
             async with aiohttp.ClientSession() as session:
                 async with session.get(metrics_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
@@ -148,27 +143,6 @@ class ServerHealthMonitor:
                         return ServerMetrics(is_healthy=False)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             return ServerMetrics(is_healthy=False)
-
-    @staticmethod
-    async def old_check_health(url: str) -> bool:
-        """
-        Asynchronously check if a server is responding.
-
-        Args:
-            url: The server URL to check
-
-        Returns:
-            True if server is responding, False otherwise
-        """
-        # TODO: remove when all servers support /metrics
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status in [HTTPStatus.METHOD_NOT_ALLOWED, HTTPStatus.OK]:
-                        return True  # Method not allowed but server is up
-                    return False
-        except (aiohttp.ClientError, asyncio.TimeoutError):
-            return False
 
     async def check_all_servers(self) -> None:
         """Check health of all registered servers and update healthy URLs per model with metrics."""
