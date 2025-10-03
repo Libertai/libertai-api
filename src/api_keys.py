@@ -38,9 +38,6 @@ class KeysManager:
             cls._instance = super(KeysManager, cls).__new__(cls, *args, **kwargs)
         return cls._instance
 
-    def add_keys(self, keys):
-        self.keys.update(keys)
-
     def key_exists(self, key):
         return key in self.keys
 
