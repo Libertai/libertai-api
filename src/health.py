@@ -112,18 +112,19 @@ class ServerHealthMonitor:
 
         return metrics
 
-    async def check_server_metrics_async(self, url: str) -> ServerMetrics:
+    async def check_server_metrics_async(self, url: str, model: str) -> ServerMetrics:
         """
         Asynchronously check server health via /metrics endpoint.
 
         Args:
             url: The server URL to check
+            model: The model name
 
         Returns:
             ServerMetrics object with health status and load information
         """
         try:
-            metrics_url = f"{url}/metrics"
+            metrics_url = f"{url}/metrics/{model}"
             async with aiohttp.ClientSession() as session:
                 async with session.get(metrics_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == HTTPStatus.OK:
@@ -151,7 +152,7 @@ class ServerHealthMonitor:
 
         # Check each model's servers
         for model, urls in self.model_urls.items():
-            tasks = [self.check_server_metrics_async(url) for url in urls]
+            tasks = [self.check_server_metrics_async(url, model) for url in urls]
 
             if tasks:
                 results = await asyncio.gather(*tasks)
