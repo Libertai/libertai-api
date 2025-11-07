@@ -124,5 +124,5 @@ async def proxy_request(
             )
 
     except Exception as e:
-        print(f"Error forwarding request: {e}")
+        logger.error(f"Error forwarding request: {e}")
         raise HTTPException(status_code=500, detail=f"Error forwarding request: {str(e)}")

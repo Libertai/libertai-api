@@ -43,8 +43,7 @@ class _Config:
                     for model_name, servers in models_data.items():
                         self.MODELS[model_name.lower()] = servers
             except json.JSONDecodeError as error:
-                print(f"Error on {models_config} file")
-                print(error)
+                print(f"Error on {models_config} file: {error}")
 
 
 config = _Config()

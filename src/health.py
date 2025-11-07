@@ -5,6 +5,9 @@ from http import HTTPStatus
 import aiohttp
 
 from src.config import config
+from src.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class ServerMetrics:
@@ -107,7 +110,8 @@ class ServerHealthMonitor:
                     else:
                         value = float(value_str)
                     metrics[metric_name] = value
-                except ValueError:
+                except ValueError as e:
+                    logger.error(f"Health metrics parsing error: {e}")
                     continue
 
         return metrics
@@ -126,7 +130,7 @@ class ServerHealthMonitor:
         try:
             metrics_url = f"{url}/metrics/{model}"
             async with aiohttp.ClientSession() as session:
-                async with session.get(metrics_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.get(metrics_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == HTTPStatus.OK:
                         metrics_text = await response.text()
                         metrics = self.parse_metrics(metrics_text)
@@ -141,8 +145,10 @@ class ServerHealthMonitor:
                             is_healthy=True,
                         )
                     else:
+                        logger.error(f"Health status error: {response.status}")
                         return ServerMetrics(is_healthy=False)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+            logger.error(f"Health metrics error for {url}: {type(e).__name__}: {e or 'No error message'}")
             return ServerMetrics(is_healthy=False)
 
     async def check_all_servers(self) -> None:

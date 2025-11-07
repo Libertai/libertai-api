@@ -42,7 +42,6 @@ async def run_telegram_reporting():
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    print("Starting server...")
     # Start background tasks
     asyncio.create_task(run_jobs())
     asyncio.create_task(run_telegram_reporting())
