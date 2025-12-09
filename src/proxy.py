@@ -16,8 +16,17 @@ router = APIRouter(tags=["Proxy"])
 keys_manager = KeysManager()
 security = HTTPBearer()
 
-timeout = httpx.Timeout(timeout=600.0)  # 10 minutes
-client = httpx.AsyncClient(timeout=timeout)
+timeout = httpx.Timeout(
+    connect=10.0,  # Connection timeout
+    read=600.0,    # Read timeout (10 minutes for long inference)
+    write=10.0,    # Write timeout (text prompts only)
+    pool=10.0      # Pool connection timeout
+)
+limits = httpx.Limits(
+    max_connections=500,           # Max total concurrent connections
+    max_keepalive_connections=100  # Max idle connections to keep alive
+)
+client = httpx.AsyncClient(timeout=timeout, limits=limits)
 
 
 @router.on_event("shutdown")
@@ -80,7 +89,6 @@ async def proxy_request(
     try:
         req = client.build_request("POST", url, content=body, headers=headers, params=request.query_params)
         response = await client.send(req, stream=True)
-        response.raise_for_status()
 
         # Update the preferred instances map and create the cookie header
         preferred_instances_map[model_name] = server
@@ -124,5 +132,5 @@ async def proxy_request(
             )
 
     except Exception as e:
-        logger.error(f"Error forwarding request: {e}")
-        raise HTTPException(status_code=500, detail=f"Error forwarding request: {str(e)}")
+        logger.error(f"Error forwarding request to {url}: {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error forwarding request: {type(e).__name__}: {str(e)}")
