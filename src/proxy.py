@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 from src.api_keys import KeysManager
 from src.config import config
-from src.health import server_health_monitor
 from src.logger import setup_logger
 
 router = APIRouter(tags=["Proxy"])
@@ -27,6 +26,9 @@ limits = httpx.Limits(
     max_keepalive_connections=100  # Max idle connections to keep alive
 )
 client = httpx.AsyncClient(timeout=timeout, limits=limits)
+
+# Round-robin counter for load balancing
+round_robin_counters: dict[str, int] = {}
 
 
 @router.on_event("shutdown")
@@ -67,15 +69,6 @@ async def proxy_request(
     if model not in config.MODELS or not config.MODELS[model]:
         return None
 
-    # Select server from the health and metrics monitoring
-    server = server_health_monitor.get_least_busy_server(model, preferred_server)
-
-    if not server:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND,
-            detail=f"No server available for model {model_name}",
-        )
-
     # Get the original request body & headers
     headers = dict(request.headers)
     body = await request.body()
@@ -83,54 +76,98 @@ async def proxy_request(
     # Clean up headers
     headers.pop("host", None)
 
-    # Forward the request to the selected server
-    url = f"{server}/{full_path}"
-
-    try:
-        req = client.build_request("POST", url, content=body, headers=headers, params=request.query_params)
-        response = await client.send(req, stream=True)
-
-        # Update the preferred instances map and create the cookie header
-        preferred_instances_map[model_name] = server
-        updated_cookie_value = json.dumps(preferred_instances_map)
-
-        # Build the Set-Cookie header string manually
-        cookie_header = (
-            f"preferred_instances={updated_cookie_value}; Max-Age=1800; Path=/; HttpOnly; Secure; SameSite=Lax"
+    # Get all configured servers for the model
+    all_servers = config.MODELS.get(model, [])
+    if not all_servers:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail=f"No server configured for model {model_name}",
         )
 
-        # Copy original headers and add the Set-Cookie header
-        response_headers = dict(response.headers)
-        response_headers["set-cookie"] = cookie_header
+    # Round-robin load balancing: rotate server list based on counter
+    if model not in round_robin_counters:
+        round_robin_counters[model] = 0
 
-        is_streaming_response = response.headers.get("content-type", "") == "text/event-stream"
+    counter = round_robin_counters[model]
+    round_robin_counters[model] = (counter + 1) % len(all_servers)
 
-        if is_streaming_response:
+    # Rotate list for round-robin
+    rotated_servers = all_servers[counter:] + all_servers[:counter]
 
-            async def generate_chunks():
-                try:
-                    async for chunk in response.aiter_bytes():
-                        yield chunk
-                finally:
-                    await response.aclose()
+    # Try preferred server first, then round-robin through others
+    servers_to_try = []
+    if preferred_server and preferred_server in all_servers:
+        servers_to_try.append(preferred_server)
+        servers_to_try.extend([s for s in rotated_servers if s != preferred_server])
+    else:
+        servers_to_try = rotated_servers
 
-            return StreamingResponse(
-                content=generate_chunks(),
-                status_code=response.status_code,
-                headers=dict(response.headers),
-                media_type=response.headers.get("Content-Type", ""),
+    last_error = None
+
+    # Try each server with automatic failover
+    for attempt, server in enumerate(servers_to_try, 1):
+        url = f"{server}/{full_path}"
+
+        try:
+            logger.debug(f"Attempt {attempt}/{len(servers_to_try)}: Forwarding to {url}")
+            req = client.build_request("POST", url, content=body, headers=headers, params=request.query_params)
+            response = await client.send(req, stream=True)
+
+            # Success! Update the preferred instances map and create the cookie header
+            preferred_instances_map[model_name] = server
+            updated_cookie_value = json.dumps(preferred_instances_map)
+
+            # Build the Set-Cookie header string manually
+            cookie_header = (
+                f"preferred_instances={updated_cookie_value}; Max-Age=1800; Path=/; HttpOnly; Secure; SameSite=Lax"
             )
-        else:
-            response_bytes = await response.aread()
-            await response.aclose()
 
-            return Response(
-                content=response_bytes,
-                status_code=response.status_code,
-                headers=dict(response.headers),
-                media_type=response.headers.get("Content-Type", ""),
-            )
+            # Copy original headers and add the Set-Cookie header
+            response_headers = dict(response.headers)
+            response_headers["set-cookie"] = cookie_header
 
-    except Exception as e:
-        logger.error(f"Error forwarding request to {url}: {type(e).__name__}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error forwarding request: {type(e).__name__}: {str(e)}")
+            is_streaming_response = response.headers.get("content-type", "") == "text/event-stream"
+
+            if is_streaming_response:
+
+                async def generate_chunks():
+                    try:
+                        async for chunk in response.aiter_bytes():
+                            yield chunk
+                    finally:
+                        await response.aclose()
+
+                return StreamingResponse(
+                    content=generate_chunks(),
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    media_type=response.headers.get("Content-Type", ""),
+                )
+            else:
+                response_bytes = await response.aread()
+                await response.aclose()
+
+                return Response(
+                    content=response_bytes,
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    media_type=response.headers.get("Content-Type", ""),
+                )
+
+        except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException) as e:
+            # Connection error - try next server
+            logger.warning(f"Connection failed to {url} (attempt {attempt}/{len(servers_to_try)}): {type(e).__name__}: {e}")
+            last_error = e
+            continue
+
+        except Exception as e:
+            # Other errors - log and fail immediately
+            logger.error(f"Error forwarding request to {url}: {type(e).__name__}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error forwarding request: {type(e).__name__}: {str(e)}")
+
+    # All servers failed
+    logger.error(f"All {len(servers_to_try)} servers failed for model {model_name}. Last error: {type(last_error).__name__}: {last_error}")
+    raise HTTPException(
+        status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+        detail=f"All servers unavailable for model {model_name}"
+    )
