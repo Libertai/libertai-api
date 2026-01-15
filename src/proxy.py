@@ -140,7 +140,7 @@ async def proxy_request(
                 return StreamingResponse(
                     content=generate_chunks(),
                     status_code=response.status_code,
-                    headers=dict(response.headers),
+                    headers=response_headers,
                     media_type=response.headers.get("Content-Type", ""),
                 )
             else:
@@ -150,7 +150,7 @@ async def proxy_request(
                 return Response(
                     content=response_bytes,
                     status_code=response.status_code,
-                    headers=dict(response.headers),
+                    headers=response_headers,
                     media_type=response.headers.get("Content-Type", ""),
                 )
 
