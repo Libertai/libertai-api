@@ -1,5 +1,4 @@
 import asyncio
-import re
 from http import HTTPStatus
 
 import aiohttp
@@ -80,45 +79,9 @@ class ServerHealthMonitor:
 
         return best_server
 
-    @staticmethod
-    def parse_metrics(metrics_text: str) -> dict[str, float]:
-        """
-        Parse Prometheus-style metrics text.
-
-        Args:
-            metrics_text: Raw metrics text from /metrics endpoint
-
-        Returns:
-            Dictionary of metric names to values
-        """
-        metrics = {}
-
-        for line in metrics_text.strip().split("\n"):
-            line = line.strip()
-            if line.startswith("#") or not line:
-                continue
-
-            # Match lines like "llamacpp:requests_processing 0"
-            match = re.match(r"^(\S+)\s+([\d.]+|nan)$", line)
-            if match:
-                metric_name = match.group(1)
-                value_str = match.group(2)
-
-                try:
-                    if value_str == "nan":
-                        value = 0.0
-                    else:
-                        value = float(value_str)
-                    metrics[metric_name] = value
-                except ValueError as e:
-                    logger.error(f"Health metrics parsing error: {e}")
-                    continue
-
-        return metrics
-
     async def check_server_metrics_async(self, url: str, model: str) -> ServerMetrics:
         """
-        Asynchronously check server health via /metrics endpoint.
+        Asynchronously check server health via /health endpoint.
 
         Args:
             url: The server URL to check
@@ -128,27 +91,16 @@ class ServerHealthMonitor:
             ServerMetrics object with health status and load information
         """
         try:
-            metrics_url = f"{url}/metrics/{model}"
+            health_url = f"{url}/health/{model}"
             async with aiohttp.ClientSession() as session:
-                async with session.get(metrics_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                async with session.get(health_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == HTTPStatus.OK:
-                        metrics_text = await response.text()
-                        metrics = self.parse_metrics(metrics_text)
-
-                        # Extract the specific metrics we need
-                        requests_processing = int(metrics.get("llamacpp:requests_processing", 0))
-                        requests_deferred = int(metrics.get("llamacpp:requests_deferred", 0))
-
-                        return ServerMetrics(
-                            requests_processing=requests_processing,
-                            requests_deferred=requests_deferred,
-                            is_healthy=True,
-                        )
+                        return ServerMetrics(is_healthy=True)
                     else:
-                        logger.error(f"Health status error: {response.status}")
+                        logger.error(f"Health status error for {url}: {response.status}")
                         return ServerMetrics(is_healthy=False)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
-            logger.error(f"Health metrics error for {url}: {type(e).__name__}: {e or 'No error message'}")
+            logger.error(f"Health check error for {url}: {type(e).__name__}: {e or 'No error message'}")
             return ServerMetrics(is_healthy=False)
 
     async def check_all_servers(self) -> None:
