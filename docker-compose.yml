@@ -5,6 +5,7 @@ services:
     image: libertai-api
     container_name: libertai-api
     restart: unless-stopped
+    command: poetry run gunicorn --access-logfile - --workers 10 --worker-connections 5 --timeout 600 --keep-alive 30 --worker-class uvicorn.workers.UvicornWorker src.server:app --bind 0.0.0.0:8000
     volumes:
       - ./data:/data
     ports:
@@ -13,6 +14,12 @@ services:
       - .env
     networks:
       - ip6net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/libertai/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 networks:
   ip6net:
