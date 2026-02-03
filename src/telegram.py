@@ -10,7 +10,7 @@ from src.health import server_health_monitor
 from src.logger import setup_logger
 
 logger = setup_logger(__name__)
-
+all_jobs = set()
 
 class TelegramReporter:
     def __init__(self) -> None:
@@ -28,7 +28,7 @@ class TelegramReporter:
             self.app.add_handler(CommandHandler("status", TelegramReporter.status_command))
 
             # Start the bot in a non-blocking way
-            asyncio.create_task(self.start_bot())
+            all_jobs.add(asyncio.get_event_loop().create_task(self.start_bot()))
 
     async def start_bot(self) -> None:
         """Start the bot polling for commands."""
