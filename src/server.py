@@ -3,6 +3,13 @@ import fcntl
 import os
 from contextlib import asynccontextmanager
 
+# Use uvloop for better async performance
+try:
+    import uvloop
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+except ImportError:
+    pass  # Fall back to default asyncio event loop
+
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
