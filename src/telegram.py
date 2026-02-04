@@ -10,13 +10,13 @@ from src.health import server_health_monitor
 from src.logger import setup_logger
 
 logger = setup_logger(__name__)
-all_jobs = set()
 
 class TelegramReporter:
     def __init__(self) -> None:
         """Initialize the Telegram reporter."""
         self.bot = Bot(token=config.TELEGRAM_BOT_TOKEN) if config.TELEGRAM_BOT_TOKEN else None
         self.app = None
+        self._bot_started = False
 
         if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
             logger.warning("Telegram bot token or chat ID not set. Telegram reporting disabled.")
@@ -27,26 +27,31 @@ class TelegramReporter:
             # Add command handler
             self.app.add_handler(CommandHandler("status", TelegramReporter.status_command))
 
-            # Start the bot in a non-blocking way
-            all_jobs.add(asyncio.get_event_loop().create_task(self.start_bot()))
-
     async def start_bot(self) -> None:
-        """Start the bot polling for commands."""
-        if self.app:
-            try:
-                # Initialize bot
-                await self.app.initialize()
+        """Start the bot polling for commands. Should only be called once per application."""
+        if not self.app:
+            logger.info("Telegram bot not configured, skipping startup")
+            return
 
-                # Start the bot
-                await self.app.start()
+        if self._bot_started:
+            logger.warning("Telegram bot already started, skipping")
+            return
 
-                # Start polling for updates
-                if self.app.updater:
-                    await self.app.updater.start_polling(drop_pending_updates=True)
+        try:
+            # Initialize bot
+            await self.app.initialize()
 
-                logger.info("Telegram bot started and listening for commands")
-            except Exception as e:
-                logger.error(f"Error starting Telegram bot: {e}")
+            # Start the bot
+            await self.app.start()
+
+            # Start polling for updates
+            if self.app.updater:
+                await self.app.updater.start_polling(drop_pending_updates=True)
+
+            self._bot_started = True
+            logger.info("Telegram bot started and listening for commands")
+        except Exception as e:
+            logger.error(f"Error starting Telegram bot: {e}")
 
     @staticmethod
     async def generate_health_report() -> str:

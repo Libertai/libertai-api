@@ -1,4 +1,6 @@
 import asyncio
+import fcntl
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -40,11 +42,48 @@ async def run_telegram_reporting():
         await asyncio.sleep(TELEGRAM_REPORT_INTERVAL)
 
 
+def is_primary_worker() -> bool:
+    """
+    Determine if this is the primary worker that should run background tasks.
+    Uses a lock file to ensure only one worker across all processes runs the tasks.
+    """
+    lock_file_path = "/tmp/libertai-primary-worker.lock"
+
+    try:
+        # Try to acquire an exclusive lock
+        lock_file = open(lock_file_path, "w")
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        # If we got here, we acquired the lock - we're the primary worker
+        logger.info("This worker acquired the primary lock and will run background tasks")
+
+        # Keep the file open to maintain the lock
+        # Store it so it doesn't get garbage collected
+        if not hasattr(is_primary_worker, "_lock_file"):
+            is_primary_worker._lock_file = lock_file
+
+        return True
+    except (IOError, OSError):
+        # Lock is already held by another worker
+        logger.info("Another worker is already running background tasks")
+        return False
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Start background tasks
-    asyncio.create_task(run_jobs())
-    asyncio.create_task(run_telegram_reporting())
+    # Only start background tasks in the primary worker
+    if is_primary_worker():
+        logger.info("Starting background tasks in primary worker")
+
+        # Start the Telegram bot
+        await telegram_reporter.start_bot()
+
+        # Start background tasks
+        asyncio.create_task(run_jobs())
+        asyncio.create_task(run_telegram_reporting())
+    else:
+        logger.info("Skipping background tasks in secondary worker")
+
     yield
 
 
