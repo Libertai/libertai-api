@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from src.api_keys import KeysManager
 from src.config import config
+from src.health import server_health_monitor
 from src.logger import setup_logger
 
 router = APIRouter(tags=["Proxy"])
@@ -16,10 +17,10 @@ keys_manager = KeysManager()
 security = HTTPBearer()
 
 timeout = httpx.Timeout(
-    connect=10.0,  # Connection timeout
+    connect=3.0,   # Connection timeout (fast failover)
     read=600.0,    # Read timeout (10 minutes for long inference)
     write=10.0,    # Write timeout (text prompts only)
-    pool=10.0      # Pool connection timeout
+    pool=5.0       # Pool connection timeout
 )
 limits = httpx.Limits(
     max_connections=500,           # Max total concurrent connections
@@ -76,27 +77,32 @@ async def proxy_request(
     # Clean up headers
     headers.pop("host", None)
 
-    # Get all configured servers for the model
+    # Get healthy servers, fall back to all servers if none healthy
+    healthy_servers = server_health_monitor.healthy_model_urls.get(model, [])
     all_servers = config.MODELS.get(model, [])
+
     if not all_servers:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=f"No server configured for model {model_name}",
         )
 
+    # Prefer healthy servers, fall back to all if none healthy
+    servers_pool = healthy_servers if healthy_servers else all_servers
+
     # Round-robin load balancing: rotate server list based on counter
     if model not in round_robin_counters:
         round_robin_counters[model] = 0
 
     counter = round_robin_counters[model]
-    round_robin_counters[model] = (counter + 1) % len(all_servers)
+    round_robin_counters[model] = (counter + 1) % len(servers_pool)
 
     # Rotate list for round-robin
-    rotated_servers = all_servers[counter:] + all_servers[:counter]
+    rotated_servers = servers_pool[counter:] + servers_pool[:counter]
 
-    # Try preferred server first, then round-robin through others
+    # Try preferred server first (if healthy), then round-robin through others
     servers_to_try = []
-    if preferred_server and preferred_server in all_servers:
+    if preferred_server and preferred_server in servers_pool:
         servers_to_try.append(preferred_server)
         servers_to_try.extend([s for s in rotated_servers if s != preferred_server])
     else:
