@@ -1,11 +1,11 @@
 import asyncio
 import fcntl
-import os
 from contextlib import asynccontextmanager
 
 # Use uvloop for better async performance
 try:
     import uvloop
+
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 except ImportError:
     pass  # Fall back to default asyncio event loop
@@ -26,7 +26,7 @@ logger = setup_logger(__name__)
 
 # Constants
 HEALTH_CHECK_INTERVAL = 30  # seconds
-TELEGRAM_REPORT_INTERVAL = 1800  # 30 minutes
+TELEGRAM_REPORT_INTERVAL = 600  # 10 minutes
 
 
 async def run_jobs():
