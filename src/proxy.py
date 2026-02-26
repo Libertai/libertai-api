@@ -11,6 +11,7 @@ from src.api_keys import KeysManager
 from src.config import config
 from src.health import server_health_monitor
 from src.logger import setup_logger
+from src.x402 import x402_manager
 
 router = APIRouter(tags=["Proxy"])
 keys_manager = KeysManager()
@@ -76,6 +77,42 @@ async def proxy_request(
 
     # Clean up headers
     headers.pop("host", None)
+
+    # Conditional auth: if no Authorization header, use x402 payment flow
+    has_auth = request.headers.get("authorization")
+    if not has_auth:
+        try:
+            body_json = json.loads(body)
+        except json.JSONDecodeError:
+            body_json = {}
+
+        max_price = x402_manager.compute_max_price(model_name, body_json)
+        if max_price is None:
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND,
+                detail=f"Model '{model_name}' not available for x402 payments",
+            )
+
+        payment_header = request.headers.get("x-payment")
+        if not payment_header:
+            resource_url = str(request.url)
+            return x402_manager.build_402_response(model_name, max_price, resource_url)
+
+        valid = await x402_manager.verify_payment(payment_header, max_price)
+        if not valid:
+            resource_url = str(request.url)
+            return x402_manager.build_402_response(model_name, max_price, resource_url)
+
+        # Inject x402 auth headers for downstream
+        headers["authorization"] = f"Bearer {config.X402_API_KEY}"
+        headers["x-payment"] = payment_header
+        headers["x-payment-requirements"] = json.dumps({
+            "scheme": "upto",
+            "network": "base",
+            "maxAmountRequired": str(int(max_price * 1_000_000)),
+            "payTo": config.X402_WALLET_ADDRESS,
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        })
 
     # Get healthy servers, fall back to all servers if none healthy
     healthy_servers = server_health_monitor.healthy_model_urls.get(model, [])
