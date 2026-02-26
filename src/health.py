@@ -92,6 +92,10 @@ class ServerHealthMonitor:
         """
         try:
             health_url = f"{url}/health/{model}"
+            if model == "hermes-3-8b-tee":
+                # Hardcoded healthcheck for Hermes which is in an isolated TEE with an old version
+                return ServerMetrics(is_healthy=True)
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(health_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == HTTPStatus.OK:
