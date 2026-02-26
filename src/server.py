@@ -20,6 +20,7 @@ from src.logger import setup_logger
 from src.model import router as model_router
 from src.proxy import router as proxy_router
 from src.telegram import telegram_reporter
+from src.x402 import x402_manager
 
 keys_manager = KeysManager()
 logger = setup_logger(__name__)
@@ -34,6 +35,7 @@ async def run_jobs():
     while True:
         await keys_manager.refresh_keys()
         await server_health_monitor.check_all_servers()
+        await x402_manager.refresh_prices()
         await asyncio.sleep(HEALTH_CHECK_INTERVAL)
 
 
@@ -67,7 +69,7 @@ def is_primary_worker() -> bool:
         # Keep the file open to maintain the lock
         # Store it so it doesn't get garbage collected
         if not hasattr(is_primary_worker, "_lock_file"):
-            is_primary_worker._lock_file = lock_file
+            is_primary_worker._lock_file = lock_file  # type: ignore[attr-defined]
 
         return True
     except (IOError, OSError):

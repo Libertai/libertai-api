@@ -11,11 +11,11 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 def create_signed_payload(data: dict[str, Any], private_key_b64: str) -> dict[str, str]:
     """
     Create a signed payload using the private key.
-    
+
     Args:
         data: Dictionary containing the data to sign
         private_key_b64: Base64-encoded private key for signing
-        
+
     Returns:
         Dictionary with base64-encoded data and signature
     """
@@ -35,7 +35,4 @@ def create_signed_payload(data: dict[str, Any], private_key_b64: str) -> dict[st
     )
 
     # Return base64 encoded data and signature
-    return {
-        "data": base64.b64encode(json_data).decode(), 
-        "signature": base64.b64encode(encrypted_data).decode()
-    }
+    return {"data": base64.b64encode(json_data).decode(), "signature": base64.b64encode(encrypted_data).decode()}

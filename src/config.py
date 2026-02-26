@@ -13,6 +13,9 @@ class _Config:
     TELEGRAM_CHAT_ID: str
     TELEGRAM_TOPIC_ID: str
     PRIVATE_KEY: str
+    X402_API_KEY: str
+    X402_WALLET_ADDRESS: str
+    THIRDWEB_SECRET_KEY: str
 
     LOG_LEVEL: int
     LOG_FILE: str | None
@@ -26,6 +29,9 @@ class _Config:
         self.TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
         self.TELEGRAM_TOPIC_ID = os.getenv("TELEGRAM_TOPIC_ID", "")
         self.PRIVATE_KEY = os.getenv("PRIVATE_KEY", "")
+        self.X402_API_KEY = os.getenv("X402_API_KEY", "")
+        self.X402_WALLET_ADDRESS = os.getenv("X402_WALLET_ADDRESS", "")
+        self.THIRDWEB_SECRET_KEY = os.getenv("THIRDWEB_SECRET_KEY", "")
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
