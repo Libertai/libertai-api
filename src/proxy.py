@@ -94,13 +94,14 @@ async def proxy_request(
             )
 
         payment_header = request.headers.get("x-payment")
+        resource_url = (
+            f"{config.PUBLIC_BASE_URL}/{full_path}" if config.PUBLIC_BASE_URL else str(request.url)
+        )
         if not payment_header:
-            resource_url = str(request.url)
             return x402_manager.build_402_response(model_name, max_price, resource_url)
 
         valid = await x402_manager.verify_payment(payment_header, max_price)
         if not valid:
-            resource_url = str(request.url)
             return x402_manager.build_402_response(model_name, max_price, resource_url)
 
         # Inject x402 auth headers for downstream
