@@ -18,14 +18,14 @@ keys_manager = KeysManager()
 security = HTTPBearer()
 
 timeout = httpx.Timeout(
-    connect=3.0,   # Connection timeout (fast failover)
-    read=600.0,    # Read timeout (10 minutes for long inference)
-    write=10.0,    # Write timeout (text prompts only)
-    pool=5.0       # Pool connection timeout
+    connect=3.0,  # Connection timeout (fast failover)
+    read=600.0,  # Read timeout (10 minutes for long inference)
+    write=10.0,  # Write timeout (text prompts only)
+    pool=5.0,  # Pool connection timeout
 )
 limits = httpx.Limits(
-    max_connections=500,           # Max total concurrent connections
-    max_keepalive_connections=100  # Max idle connections to keep alive
+    max_connections=500,  # Max total concurrent connections
+    max_keepalive_connections=100,  # Max idle connections to keep alive
 )
 client = httpx.AsyncClient(timeout=timeout, limits=limits)
 
@@ -106,13 +106,15 @@ async def proxy_request(
         # Inject x402 auth headers for downstream
         headers["authorization"] = f"Bearer {config.X402_API_KEY}"
         headers["x-payment"] = payment_header
-        headers["x-payment-requirements"] = json.dumps({
-            "scheme": "upto",
-            "network": "base",
-            "maxAmountRequired": str(int(max_price * 1_000_000)),
-            "payTo": config.X402_WALLET_ADDRESS,
-            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-        })
+        headers["x-payment-requirements"] = json.dumps(
+            {
+                "scheme": "upto",
+                "network": "base",
+                "maxAmountRequired": str(int(max_price * 1_000_000)),
+                "payTo": config.X402_WALLET_ADDRESS,
+                "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            }
+        )
 
     # Get healthy servers, fall back to all servers if none healthy
     healthy_servers = server_health_monitor.healthy_model_urls.get(model, [])
@@ -199,7 +201,9 @@ async def proxy_request(
 
         except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException) as e:
             # Connection error - try next server
-            logger.warning(f"Connection failed to {url} (attempt {attempt}/{len(servers_to_try)}): {type(e).__name__}: {e}")
+            logger.warning(
+                f"Connection failed to {url} (attempt {attempt}/{len(servers_to_try)}): {type(e).__name__}: {e}"
+            )
             last_error = e
             continue
 
@@ -209,8 +213,9 @@ async def proxy_request(
             raise HTTPException(status_code=500, detail=f"Error forwarding request: {type(e).__name__}: {str(e)}")
 
     # All servers failed
-    logger.error(f"All {len(servers_to_try)} servers failed for model {model_name}. Last error: {type(last_error).__name__}: {last_error}")
+    logger.error(
+        f"All {len(servers_to_try)} servers failed for model {model_name}. Last error: {type(last_error).__name__}: {last_error}"
+    )
     raise HTTPException(
-        status_code=HTTPStatus.SERVICE_UNAVAILABLE,
-        detail=f"All servers unavailable for model {model_name}"
+        status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=f"All servers unavailable for model {model_name}"
     )

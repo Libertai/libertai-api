@@ -10,6 +10,7 @@ from src.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+
 class TelegramReporter:
     def __init__(self) -> None:
         """Initialize the Telegram reporter."""

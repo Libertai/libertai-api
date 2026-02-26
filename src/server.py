@@ -69,7 +69,7 @@ def is_primary_worker() -> bool:
         # Keep the file open to maintain the lock
         # Store it so it doesn't get garbage collected
         if not hasattr(is_primary_worker, "_lock_file"):
-            is_primary_worker._lock_file = lock_file
+            is_primary_worker._lock_file = lock_file  # type: ignore[attr-defined]
 
         return True
     except (IOError, OSError):

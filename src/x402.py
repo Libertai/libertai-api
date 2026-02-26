@@ -1,7 +1,7 @@
 import json
 
 import aiohttp
-import tiktoken
+import tiktoken  # type: ignore[import-not-found]
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
@@ -41,9 +41,14 @@ class X402Manager:
         messages_text = json.dumps(messages)
         input_tokens = len(_enc.encode(messages_text))
 
-        max_tokens = body.get("max_tokens") or body.get("max_completion_tokens") or info.get("default_max_tokens", 4096)
+        max_tokens = (
+            body.get("max_tokens") or body.get("max_completion_tokens") or info.get("default_max_tokens", 4096)
+        )
 
-        price = input_tokens / 1_000_000 * info["price_per_million_input_tokens"] + max_tokens / 1_000_000 * info["price_per_million_output_tokens"]
+        price = (
+            input_tokens / 1_000_000 * info["price_per_million_input_tokens"]
+            + max_tokens / 1_000_000 * info["price_per_million_output_tokens"]
+        )
         return max(price, 0.0001)
 
     def build_402_response(self, model: str, max_price: float, resource_url: str) -> Response:
