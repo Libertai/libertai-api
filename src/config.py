@@ -15,6 +15,7 @@ class _Config:
     PRIVATE_KEY: str
     X402_API_KEY: str
     X402_WALLET_ADDRESS: str
+    X402_SERVER_WALLET_ADDRESS: str
     THIRDWEB_SECRET_KEY: str
     PUBLIC_BASE_URL: str
 
@@ -32,6 +33,7 @@ class _Config:
         self.PRIVATE_KEY = os.getenv("PRIVATE_KEY", "")
         self.X402_API_KEY = os.getenv("X402_API_KEY", "")
         self.X402_WALLET_ADDRESS = os.getenv("X402_WALLET_ADDRESS", "")
+        self.X402_SERVER_WALLET_ADDRESS = os.getenv("X402_SERVER_WALLET_ADDRESS", "")
         self.THIRDWEB_SECRET_KEY = os.getenv("THIRDWEB_SECRET_KEY", "")
         self.PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 

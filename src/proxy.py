@@ -93,29 +93,27 @@ async def proxy_request(
                 detail=f"Model '{model_name}' not available for x402 payments",
             )
 
-        payment_header = request.headers.get("x-payment")
-        resource_url = (
-            f"{config.PUBLIC_BASE_URL}/{full_path}" if config.PUBLIC_BASE_URL else str(request.url)
-        )
-        if not payment_header:
-            return x402_manager.build_402_response(model_name, max_price, resource_url)
+        resource_url = f"{config.PUBLIC_BASE_URL}/{full_path}" if config.PUBLIC_BASE_URL else str(request.url)
 
-        valid = await x402_manager.verify_payment(payment_header, max_price)
+        requirements = await x402_manager.fetch_payment_requirements(model_name, max_price, resource_url)
+        if not requirements:
+            raise HTTPException(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                detail="Failed to get payment requirements from facilitator",
+            )
+
+        payment_header = request.headers.get("x-payment")
+        if not payment_header:
+            return x402_manager.build_402_response(requirements)
+
+        valid = await x402_manager.verify_payment(payment_header, requirements[0])
         if not valid:
-            return x402_manager.build_402_response(model_name, max_price, resource_url)
+            return x402_manager.build_402_response(requirements)
 
         # Inject x402 auth headers for downstream
         headers["authorization"] = f"Bearer {config.X402_API_KEY}"
         headers["x-payment"] = payment_header
-        headers["x-payment-requirements"] = json.dumps(
-            {
-                "scheme": "upto",
-                "network": "base",
-                "maxAmountRequired": str(int(max_price * 1_000_000)),
-                "payTo": config.X402_WALLET_ADDRESS,
-                "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-            }
-        )
+        headers["x-payment-requirements"] = json.dumps(requirements[0])
 
     # Get healthy servers, fall back to all servers if none healthy
     healthy_servers = server_health_monitor.healthy_model_urls.get(model, [])
