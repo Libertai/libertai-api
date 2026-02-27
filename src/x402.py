@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import aiohttp
@@ -28,7 +29,7 @@ class X402Manager:
     def get_price_info(self, model: str) -> dict | None:
         return self.prices.get(model)
 
-    def compute_max_price(self, model: str, body: dict) -> float | None:
+    async def compute_max_price(self, model: str, body: dict) -> float | None:
         """Compute max price based on input tokens + max_tokens."""
         info = self.get_price_info(model)
         if not info:
@@ -39,7 +40,7 @@ class X402Manager:
 
         messages = body.get("messages", [])
         messages_text = json.dumps(messages)
-        input_tokens = len(_enc.encode(messages_text))
+        input_tokens = await asyncio.to_thread(lambda: len(_enc.encode(messages_text)))
 
         max_tokens = (
             body.get("max_tokens") or body.get("max_completion_tokens") or info.get("default_max_tokens", 4096)

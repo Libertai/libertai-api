@@ -86,7 +86,7 @@ async def proxy_request(
         except json.JSONDecodeError:
             body_json = {}
 
-        max_price = x402_manager.compute_max_price(model, body_json)
+        max_price = await x402_manager.compute_max_price(model, body_json)
         if max_price is None:
             raise HTTPException(
                 status_code=HTTPStatus.NOT_FOUND,

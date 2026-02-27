@@ -5,7 +5,7 @@ services:
     image: libertai-api
     container_name: libertai-api
     restart: unless-stopped
-    command: poetry run gunicorn --access-logfile - --workers 10 --worker-connections 5 --timeout 600 --keep-alive 30 --worker-class uvicorn.workers.UvicornWorker src.server:app --bind 0.0.0.0:8000
+    command: poetry run uvicorn src.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 30 --timeout-graceful-shutdown 600 --loop uvloop --limit-concurrency 500
     volumes:
       - ./data:/data
     ports:
