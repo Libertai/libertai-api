@@ -69,7 +69,10 @@ async def proxy_request(
 
     model = model_name.lower()
     if model not in config.MODELS or not config.MODELS[model]:
-        return None
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail=f"Model '{model_name}' not found",
+        )
 
     # Get the original request body & headers
     headers = dict(request.headers)
