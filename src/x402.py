@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 
 import aiohttp
@@ -98,25 +99,37 @@ class X402Manager:
     @staticmethod
     def build_402_response(requirements: list[dict]) -> Response:
         """Build 402 response with requirements from thirdweb."""
+        payment_required = {
+            "x402Version": 2,
+            "accepts": requirements,
+        }
+        # Encode as base64 PAYMENT-REQUIRED header (x402 v2 protocol)
+        encoded = base64.b64encode(json.dumps(payment_required).encode()).decode()
         return JSONResponse(
             status_code=402,
             content={
-                "x402Version": 2,
+                **payment_required,
                 "error": "X-PAYMENT header is required",
-                "accepts": requirements,
             },
-            headers={"WWW-Authenticate": "X-PAYMENT"},
+            headers={
+                "WWW-Authenticate": "X-PAYMENT",
+                "PAYMENT-REQUIRED": encoded,
+            },
         )
 
     @staticmethod
     async def verify_payment(payment_header: str, requirements: dict) -> bool:
         """Verify x402 payment via thirdweb (no settlement)."""
         try:
+            # x402 v1 sends raw JSON in X-PAYMENT, v2 sends base64-encoded JSON in PAYMENT-SIGNATURE
             try:
                 payment_payload = json.loads(payment_header)
             except json.JSONDecodeError:
-                logger.error("Invalid x402 payment header: not valid JSON")
-                return False
+                try:
+                    payment_payload = json.loads(base64.b64decode(payment_header))
+                except Exception:
+                    logger.error("Invalid x402 payment header: not valid JSON or base64")
+                    return False
 
             payload = {
                 "x402Version": 2,

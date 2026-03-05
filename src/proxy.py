@@ -105,7 +105,7 @@ async def proxy_request(
                 detail="Failed to get payment requirements from facilitator",
             )
 
-        payment_header = request.headers.get("x-payment")
+        payment_header = request.headers.get("x-payment") or request.headers.get("payment-signature")
         if not payment_header:
             return x402_manager.build_402_response(requirements)
 
