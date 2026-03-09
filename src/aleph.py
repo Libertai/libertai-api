@@ -12,14 +12,15 @@ ALEPH_API_URL = (
 
 
 class AlephService:
-    __last_fetch_time: float = 0
-    __cache_ttl = 300  # 5 minutes
-    redirections: dict[str, str] = {}
+    def __init__(self):
+        self._last_fetch_time: float = 0
+        self._cache_ttl = 300  # 5 minutes
+        self.redirections: dict[str, str] = {}
 
     async def refresh_redirections(self):
         """Fetch redirections from Aleph and build lookup map."""
         current_time = time.time()
-        if (current_time - self.__last_fetch_time) < self.__cache_ttl:
+        if (current_time - self._last_fetch_time) < self._cache_ttl:
             return
 
         logger.debug("Fetching redirections from Aleph")
@@ -40,7 +41,7 @@ class AlephService:
                             new_map[from_id] = to_id
 
                     self.redirections = new_map
-                    self.__last_fetch_time = current_time
+                    self._last_fetch_time = current_time
                     logger.debug(f"Loaded {len(self.redirections)} model redirections")
         except Exception as e:
             logger.error(f"Error fetching Aleph redirections: {e}")

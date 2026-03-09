@@ -66,11 +66,13 @@ async def proxy_request(
     except json.JSONDecodeError:
         preferred_instances_map = {}
 
-    preferred_server: str | None = preferred_instances_map.get(model_name)
-
     model = model_name.lower()
     # Resolve model redirections (e.g. deprecated model names)
     model = aleph_service.resolve(model)
+    if model != model_name.lower():
+        logger.debug(f"Redirected model '{model_name}' -> '{model}'")
+
+    preferred_server: str | None = preferred_instances_map.get(model)
     if model not in config.MODELS or not config.MODELS[model]:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
@@ -87,6 +89,7 @@ async def proxy_request(
             body_json = json.loads(body)
             body_json["model"] = model
             body = json.dumps(body_json).encode()
+            headers["content-length"] = str(len(body))
         except json.JSONDecodeError:
             pass
 
@@ -173,7 +176,7 @@ async def proxy_request(
             response = await client.send(req, stream=True)
 
             # Success! Update the preferred instances map and create the cookie header
-            preferred_instances_map[model_name] = server
+            preferred_instances_map[model] = server
             updated_cookie_value = json.dumps(preferred_instances_map)
 
             # Build the Set-Cookie header string manually
