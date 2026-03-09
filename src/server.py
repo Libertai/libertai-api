@@ -19,6 +19,7 @@ from src.logger import setup_logger
 from src.model import router as model_router
 from src.proxy import router as proxy_router
 from src.telegram import telegram_reporter
+from src.aleph import aleph_service
 from src.x402 import x402_manager
 
 keys_manager = KeysManager()
@@ -35,6 +36,7 @@ async def run_jobs():
         await keys_manager.refresh_keys()
         await server_health_monitor.check_all_servers()
         await x402_manager.refresh_prices()
+        await aleph_service.refresh_redirections()
         await asyncio.sleep(HEALTH_CHECK_INTERVAL)
 
 

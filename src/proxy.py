@@ -11,6 +11,7 @@ from src.api_keys import KeysManager
 from src.config import config
 from src.health import server_health_monitor
 from src.logger import setup_logger
+from src.aleph import aleph_service
 from src.x402 import x402_manager
 
 router = APIRouter(tags=["Proxy"])
@@ -68,6 +69,8 @@ async def proxy_request(
     preferred_server: str | None = preferred_instances_map.get(model_name)
 
     model = model_name.lower()
+    # Resolve model redirections (e.g. deprecated model names)
+    model = aleph_service.resolve(model)
     if model not in config.MODELS or not config.MODELS[model]:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
@@ -77,6 +80,15 @@ async def proxy_request(
     # Get the original request body & headers
     headers = dict(request.headers)
     body = await request.body()
+
+    # If model was redirected, update the request body with resolved model name
+    if model != model_name.lower():
+        try:
+            body_json = json.loads(body)
+            body_json["model"] = model
+            body = json.dumps(body_json).encode()
+        except json.JSONDecodeError:
+            pass
 
     # Clean up headers
     headers.pop("host", None)
