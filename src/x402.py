@@ -203,9 +203,9 @@ class X402Manager:
                     logger.error("Invalid x402 payment header for settlement")
                     return False
 
-            # Override maxAmountRequired with actual cost (USD → micro-USDC)
+            # Shallow copy to avoid mutating caller's dict
             actual_amount_micro = str(int(actual_amount * 1_000_000))
-            requirements["maxAmountRequired"] = actual_amount_micro
+            settle_requirements = {**requirements, "maxAmountRequired": actual_amount_micro}
 
             headers = {
                 "Content-Type": "application/json",
@@ -220,7 +220,7 @@ class X402Manager:
                     json={
                         "x402Version": 2,
                         "paymentPayload": payment_payload,
-                        "paymentRequirements": requirements,
+                        "paymentRequirements": settle_requirements,
                         "waitUntil": "confirmed",
                     },
                     headers=headers,

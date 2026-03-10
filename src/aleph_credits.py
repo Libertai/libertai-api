@@ -1,3 +1,4 @@
+import re
 from http import HTTPStatus
 
 from aleph.sdk.chains.ethereum import ETHAccount
@@ -14,6 +15,14 @@ logger = setup_logger(__name__)
 router = APIRouter(prefix="/libertai", tags=["Aleph Credits"])
 
 CREDITS_DECIMALS = 6
+_ETH_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+
+# Singleton — parsed once at import, reused across requests
+_aleph_account: ETHAccount | None = None
+if config.ALEPH_SENDER_PRIVATE_KEY:
+    _aleph_account = ETHAccount(
+        private_key=bytes.fromhex(config.ALEPH_SENDER_PRIVATE_KEY.removeprefix("0x"))
+    )
 
 
 class AlephCreditsRequest(BaseModel):
@@ -23,7 +32,7 @@ class AlephCreditsRequest(BaseModel):
 
 @router.post("/aleph-credits")
 async def purchase_aleph_credits(request: Request, body: AlephCreditsRequest):
-    if not config.ALEPH_SENDER_PRIVATE_KEY:
+    if not _aleph_account:
         raise HTTPException(
             status_code=HTTPStatus.SERVICE_UNAVAILABLE,
             detail="Aleph credits service not configured",
@@ -33,6 +42,12 @@ async def purchase_aleph_credits(request: Request, body: AlephCreditsRequest):
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
             detail="Amount must be positive",
+        )
+
+    if not _ETH_ADDRESS_RE.match(body.address):
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Invalid Ethereum address",
         )
 
     # x402 exact payment flow
@@ -57,12 +72,19 @@ async def purchase_aleph_credits(request: Request, body: AlephCreditsRequest):
     if not valid:
         return x402_manager.build_402_response(requirements)
 
-    # Payment verified — transfer credits via Aleph SDK
+    # Settle x402 payment (collect USDC) BEFORE transferring credits
+    settled = await x402_manager.settle_payment(payment_header, requirements[0], body.amount)
+    if not settled:
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail="Payment settlement failed",
+        )
+
+    # Payment settled — transfer credits via Aleph SDK
     credit_amount = int(body.amount * 10**CREDITS_DECIMALS)
 
     try:
-        account = ETHAccount(private_key=bytes.fromhex(config.ALEPH_SENDER_PRIVATE_KEY.removeprefix("0x")))
-        async with AuthenticatedAlephHttpClient(account=account) as client:
+        async with AuthenticatedAlephHttpClient(account=_aleph_account) as client:
             message, status = await client.create_post(
                 post_content={
                     "transfer": {
@@ -78,12 +100,6 @@ async def purchase_aleph_credits(request: Request, body: AlephCreditsRequest):
                 channel="ALEPH_CREDIT",
             )
         logger.info(f"Transferred {credit_amount} credits to {body.address} (message hash: {message.item_hash})")
-
-        # Settle x402 payment (collect USDC)
-        settled = await x402_manager.settle_payment(payment_header, requirements[0], body.amount)
-        if not settled:
-            logger.error(f"Payment settlement failed for credit transfer {message.item_hash}")
-
         return {
             "status": "success",
             "credits_transferred": credit_amount,
