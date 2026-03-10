@@ -18,6 +18,8 @@ class _Config:
     X402_SERVER_WALLET_ADDRESS: str
     THIRDWEB_SECRET_KEY: str
     PUBLIC_BASE_URL: str
+    THIRDWEB_VAULT_ACCESS_TOKEN: str
+    ALEPH_SENDER_PRIVATE_KEY: str
 
     LOG_LEVEL: int
     LOG_FILE: str | None
@@ -36,6 +38,8 @@ class _Config:
         self.X402_SERVER_WALLET_ADDRESS = os.getenv("X402_SERVER_WALLET_ADDRESS", "")
         self.THIRDWEB_SECRET_KEY = os.getenv("THIRDWEB_SECRET_KEY", "")
         self.PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+        self.THIRDWEB_VAULT_ACCESS_TOKEN = os.getenv("THIRDWEB_VAULT_ACCESS_TOKEN", "")
+        self.ALEPH_SENDER_PRIVATE_KEY = os.getenv("ALEPH_SENDER_PRIVATE_KEY", "")
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
