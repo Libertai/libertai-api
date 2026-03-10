@@ -36,7 +36,7 @@ async def run_jobs():
         await keys_manager.refresh_keys()
         await server_health_monitor.check_all_servers()
         await x402_manager.refresh_prices()
-        await aleph_service.refresh_redirections()
+        await aleph_service.refresh()
         await asyncio.sleep(HEALTH_CHECK_INTERVAL)
 
 

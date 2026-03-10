@@ -16,9 +16,10 @@ class AlephService:
         self._last_fetch_time: float = 0
         self._cache_ttl = 300  # 5 minutes
         self.redirections: dict[str, str] = {}
+        self.reasoning_models: set[str] = set()
 
-    async def refresh_redirections(self):
-        """Fetch redirections from Aleph and build lookup map."""
+    async def refresh(self):
+        """Fetch redirections and model capabilities from Aleph."""
         current_time = time.time()
         if (current_time - self._last_fetch_time) < self._cache_ttl:
             return
@@ -41,10 +42,25 @@ class AlephService:
                             new_map[from_id] = to_id
 
                     self.redirections = new_map
-                    self._last_fetch_time = current_time
                     logger.debug(f"Loaded {len(self.redirections)} model redirections")
+
+                    raw_models = pricing_data.get("models", [])
+                    new_reasoning = set()
+                    for m in raw_models:
+                        model_id = m.get("id", "").lower()
+                        reasoning = m.get("capabilities", {}).get("text", {}).get("reasoning", False)
+                        if model_id and reasoning:
+                            new_reasoning.add(model_id)
+
+                    self.reasoning_models = new_reasoning
+                    logger.debug(f"Loaded {len(self.reasoning_models)} reasoning models")
+
+                    self._last_fetch_time = current_time
         except Exception as e:
-            logger.error(f"Error fetching Aleph redirections: {e}")
+            logger.error(f"Error fetching Aleph data: {e}")
+
+    def is_reasoning_model(self, model: str) -> bool:
+        return model.lower() in self.reasoning_models
 
     def resolve(self, model: str) -> str:
         """Return the target model if redirected, else the original."""
