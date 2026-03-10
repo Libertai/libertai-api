@@ -72,6 +72,16 @@ async def proxy_request(
     if model != model_name.lower():
         logger.debug(f"Redirected model '{model_name}' -> '{model}'")
 
+    # Handle thinking model variants
+    thinking_requested = False
+    if model.endswith("-thinking"):
+        base_model = model.removesuffix("-thinking")
+        if aleph_service.is_reasoning_model(base_model):
+            thinking_requested = True
+            model = base_model
+            logger.debug(f"Thinking variant requested for model '{model}'")
+        # If base model isn't a reasoning model, let it fall through to 404
+
     preferred_server: str | None = preferred_instances_map.get(model)
     if model not in config.MODELS or not config.MODELS[model]:
         raise HTTPException(
@@ -83,11 +93,17 @@ async def proxy_request(
     headers = dict(request.headers)
     body = await request.body()
 
-    # If model was redirected, update the request body with resolved model name
-    if model != model_name.lower():
+    # Update request body if model changed or needs thinking kwargs
+    needs_body_update = (model != model_name.lower()) or thinking_requested or (
+        not thinking_requested and aleph_service.is_reasoning_model(model)
+    )
+    if needs_body_update:
         try:
             body_json = json.loads(body)
             body_json["model"] = model
+            # Reasoning models: disable thinking by default, enable only with -thinking suffix
+            if aleph_service.is_reasoning_model(model) and not thinking_requested:
+                body_json.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
             body = json.dumps(body_json).encode()
             headers["content-length"] = str(len(body))
         except json.JSONDecodeError:
