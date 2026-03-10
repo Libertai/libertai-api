@@ -3,6 +3,7 @@ import time
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from src.aleph import aleph_service
 from src.config import config
 
 router = APIRouter(tags=["Models"])
@@ -14,6 +15,8 @@ async def models_list():
     data = {}
     for model_name, servers in config.MODELS.items():
         data[model_name] = {"servers": servers}
+        if aleph_service.is_reasoning_model(model_name):
+            data[f"{model_name}-thinking"] = {"servers": servers}
 
     return JSONResponse(content=data)
 
@@ -29,6 +32,9 @@ async def openai_models_list():
     for model_name in config.MODELS.keys():
         model_entry = {"id": model_name, "object": "model", "created": current_timestamp, "owned_by": "libertai"}
         models_data.append(model_entry)
+        if aleph_service.is_reasoning_model(model_name):
+            thinking_entry = {"id": f"{model_name}-thinking", "object": "model", "created": current_timestamp, "owned_by": "libertai"}
+            models_data.append(thinking_entry)
 
     response = {"object": "list", "data": models_data}
 
