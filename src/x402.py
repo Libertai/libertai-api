@@ -80,50 +80,54 @@ class X402Manager:
     @staticmethod
     async def fetch_payment_requirements(model: str, max_price: float, resource_url: str) -> list[dict] | None:
         """Fetch upTo payment requirements for inference."""
-        return await X402Manager._fetch_requirements({
-            "resourceUrl": resource_url,
-            "method": "POST",
-            "network": "eip155:8453",
-            "price": {
-                "amount": str(int(max_price * 1_000_000)),
-                "asset": {
-                    "address": USDC_BASE_ADDRESS,
-                    "decimals": 6,
+        return await X402Manager._fetch_requirements(
+            {
+                "resourceUrl": resource_url,
+                "method": "POST",
+                "network": "eip155:8453",
+                "price": {
+                    "amount": str(int(max_price * 1_000_000)),
+                    "asset": {
+                        "address": USDC_BASE_ADDRESS,
+                        "decimals": 6,
+                    },
                 },
-            },
-            "scheme": "upto",
-            "serverWalletAddress": config.X402_SERVER_WALLET_ADDRESS,
-            "recipientAddress": config.X402_WALLET_ADDRESS,
-            "x402Version": 2,
-            "routeConfig": {
-                "description": f"Pay-per-use inference for {model}",
-                "mimeType": "application/json",
-            },
-        })
+                "scheme": "upto",
+                "serverWalletAddress": config.X402_SERVER_WALLET_ADDRESS,
+                "recipientAddress": config.X402_WALLET_ADDRESS,
+                "x402Version": 2,
+                "routeConfig": {
+                    "description": f"Pay-per-use inference for {model}",
+                    "mimeType": "application/json",
+                },
+            }
+        )
 
     @staticmethod
     async def fetch_payment_requirements_exact(price: float, resource_url: str, description: str) -> list[dict] | None:
         """Fetch exact payment requirements for a fixed-price endpoint."""
-        return await X402Manager._fetch_requirements({
-            "resourceUrl": resource_url,
-            "method": "POST",
-            "network": "eip155:8453",
-            "price": {
-                "amount": str(int(price * 1_000_000)),
-                "asset": {
-                    "address": USDC_BASE_ADDRESS,
-                    "decimals": 6,
+        return await X402Manager._fetch_requirements(
+            {
+                "resourceUrl": resource_url,
+                "method": "POST",
+                "network": "eip155:8453",
+                "price": {
+                    "amount": str(int(price * 1_000_000)),
+                    "asset": {
+                        "address": USDC_BASE_ADDRESS,
+                        "decimals": 6,
+                    },
                 },
-            },
-            "scheme": "exact",
-            "serverWalletAddress": config.X402_SERVER_WALLET_ADDRESS,
-            "recipientAddress": config.X402_WALLET_ADDRESS,
-            "x402Version": 2,
-            "routeConfig": {
-                "description": description,
-                "mimeType": "application/json",
-            },
-        })
+                "scheme": "exact",
+                "serverWalletAddress": config.X402_SERVER_WALLET_ADDRESS,
+                "recipientAddress": config.X402_WALLET_ADDRESS,
+                "x402Version": 2,
+                "routeConfig": {
+                    "description": description,
+                    "mimeType": "application/json",
+                },
+            }
+        )
 
     @staticmethod
     def build_402_response(requirements: list[dict]) -> Response:
@@ -204,8 +208,11 @@ class X402Manager:
                     return False
 
             # Shallow copy to avoid mutating caller's dict
-            actual_amount_micro = str(int(actual_amount * 1_000_000))
-            settle_requirements = {**requirements, "maxAmountRequired": actual_amount_micro}
+            settle_requirements = {**requirements}
+            # Only override maxAmountRequired for upto scheme; exact scheme already has the fixed amount
+            if requirements.get("scheme") != "exact":
+                actual_amount_micro = str(int(actual_amount * 1_000_000))
+                settle_requirements["maxAmountRequired"] = actual_amount_micro
 
             headers = {
                 "Content-Type": "application/json",

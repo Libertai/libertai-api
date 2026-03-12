@@ -133,6 +133,20 @@ class TelegramReporter:
             if update.message:
                 await update.message.reply_text("Error generating status report. Check server logs.")
 
+    async def send_message(self, text: str) -> None:
+        """Send a plain text message to the configured Telegram channel."""
+        if not self.bot or not config.TELEGRAM_CHAT_ID:
+            logger.warning("Telegram not configured, cannot send message")
+            return
+
+        try:
+            kwargs: dict = {"chat_id": config.TELEGRAM_CHAT_ID, "text": text}
+            if config.TELEGRAM_TOPIC_ID:
+                kwargs["message_thread_id"] = int(config.TELEGRAM_TOPIC_ID)
+            await self.bot.send_message(**kwargs)
+        except Exception as e:
+            logger.error(f"Failed to send Telegram message: {e}")
+
     async def send_health_report(self) -> None:
         """
         Send a health report to the Telegram channel, but only if some URLs are down.
