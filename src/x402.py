@@ -208,10 +208,10 @@ class X402Manager:
                     return False
 
             # Shallow copy to avoid mutating caller's dict
+            actual_amount_micro = str(int(actual_amount * 1_000_000))
             settle_requirements = {**requirements}
             # Only override maxAmountRequired for upto scheme; exact scheme already has the fixed amount
-            if requirements.get("scheme") != "exact":
-                actual_amount_micro = str(int(actual_amount * 1_000_000))
+            if requirements.get("scheme", "upto") != "exact":
                 settle_requirements["maxAmountRequired"] = actual_amount_micro
 
             headers = {
@@ -231,6 +231,7 @@ class X402Manager:
                         "waitUntil": "confirmed",
                     },
                     headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=120),
                 ) as response:
                     if response.status == 200:
                         logger.info(f"x402 payment settled ({actual_amount_micro} micro-USDC)")

@@ -1,4 +1,3 @@
-import re
 from http import HTTPStatus
 
 from aleph.sdk.chains.ethereum import ETHAccount
@@ -16,7 +15,7 @@ logger = setup_logger(__name__)
 router = APIRouter(prefix="/libertai", tags=["Aleph Credits"])
 
 CREDITS_DECIMALS = 6
-_ETH_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+MAX_CREDIT_AMOUNT = 1000.0  # Maximum single purchase in USD
 
 # Singleton — parsed once at import, reused across requests
 _aleph_account: ETHAccount | None = None
@@ -24,7 +23,8 @@ if config.ALEPH_SENDER_PRIVATE_KEY:
     try:
         _aleph_account = ETHAccount(private_key=bytes.fromhex(config.ALEPH_SENDER_PRIVATE_KEY.removeprefix("0x")))
     except Exception as e:
-        logger.error(f"Failed to initialize Aleph account — check ALEPH_SENDER_PRIVATE_KEY: {e}")
+        logger.critical(f"Failed to initialize Aleph account — check ALEPH_SENDER_PRIVATE_KEY: {e}")
+        raise
 
 
 class AlephCreditsRequest(BaseModel):
@@ -46,10 +46,10 @@ async def purchase_aleph_credits(request: Request, body: AlephCreditsRequest):
             detail="Amount must be positive",
         )
 
-    if not _ETH_ADDRESS_RE.match(body.address):
+    if body.amount > MAX_CREDIT_AMOUNT:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
-            detail="Invalid Ethereum address",
+            detail=f"Amount must not exceed ${MAX_CREDIT_AMOUNT}",
         )
 
     # x402 exact payment flow
