@@ -17,6 +17,7 @@ from src.auth import router as auth_router
 from src.health import server_health_monitor
 from src.logger import setup_logger
 from src.model import router as model_router
+from src.aleph_credits import router as aleph_credits_router
 from src.proxy import router as proxy_router
 from src.telegram import telegram_reporter
 from src.aleph import aleph_service
@@ -76,4 +77,5 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(model_router)
+app.include_router(aleph_credits_router)
 app.include_router(proxy_router)

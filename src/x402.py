@@ -54,32 +54,13 @@ class X402Manager:
         return max(price, 0.0001)
 
     @staticmethod
-    async def fetch_payment_requirements(model: str, max_price: float, resource_url: str) -> list[dict] | None:
+    async def _fetch_requirements(payload: dict) -> list[dict] | None:
         """Fetch payment requirements from thirdweb /accepts endpoint."""
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{THIRDWEB_X402_BASE}/accepts",
-                    json={
-                        "resourceUrl": resource_url,
-                        "method": "POST",
-                        "network": "eip155:8453",
-                        "price": {
-                            "amount": str(int(max_price * 1_000_000)),
-                            "asset": {
-                                "address": USDC_BASE_ADDRESS,
-                                "decimals": 6,
-                            },
-                        },
-                        "scheme": "upto",
-                        "serverWalletAddress": config.X402_SERVER_WALLET_ADDRESS,
-                        "recipientAddress": config.X402_WALLET_ADDRESS,
-                        "x402Version": 2,
-                        "routeConfig": {
-                            "description": f"Pay-per-use inference for {model}",
-                            "mimeType": "application/json",
-                        },
-                    },
+                    json=payload,
                     headers={
                         "Content-Type": "application/json",
                         "x-secret-key": config.THIRDWEB_SECRET_KEY,
@@ -95,6 +76,58 @@ class X402Manager:
         except Exception as e:
             logger.error(f"thirdweb /accepts exception: {e}")
             return None
+
+    @staticmethod
+    async def fetch_payment_requirements(model: str, max_price: float, resource_url: str) -> list[dict] | None:
+        """Fetch upTo payment requirements for inference."""
+        return await X402Manager._fetch_requirements(
+            {
+                "resourceUrl": resource_url,
+                "method": "POST",
+                "network": "eip155:8453",
+                "price": {
+                    "amount": str(int(max_price * 1_000_000)),
+                    "asset": {
+                        "address": USDC_BASE_ADDRESS,
+                        "decimals": 6,
+                    },
+                },
+                "scheme": "upto",
+                "serverWalletAddress": config.X402_SERVER_WALLET_ADDRESS,
+                "recipientAddress": config.X402_WALLET_ADDRESS,
+                "x402Version": 2,
+                "routeConfig": {
+                    "description": f"Pay-per-use inference for {model}",
+                    "mimeType": "application/json",
+                },
+            }
+        )
+
+    @staticmethod
+    async def fetch_payment_requirements_exact(price: float, resource_url: str, description: str) -> list[dict] | None:
+        """Fetch exact payment requirements for a fixed-price endpoint."""
+        return await X402Manager._fetch_requirements(
+            {
+                "resourceUrl": resource_url,
+                "method": "POST",
+                "network": "eip155:8453",
+                "price": {
+                    "amount": str(int(price * 1_000_000)),
+                    "asset": {
+                        "address": USDC_BASE_ADDRESS,
+                        "decimals": 6,
+                    },
+                },
+                "scheme": "exact",
+                "serverWalletAddress": config.X402_SERVER_WALLET_ADDRESS,
+                "recipientAddress": config.X402_WALLET_ADDRESS,
+                "x402Version": 2,
+                "routeConfig": {
+                    "description": description,
+                    "mimeType": "application/json",
+                },
+            }
+        )
 
     @staticmethod
     def build_402_response(requirements: list[dict]) -> Response:
@@ -159,6 +192,57 @@ class X402Manager:
 
         except Exception as e:
             logger.error(f"x402 payment verification failed: {e}")
+            return False
+
+    @staticmethod
+    async def settle_payment(payment_header: str, requirements: dict, actual_amount: float) -> bool:
+        """Settle x402 payment via thirdweb (actually collect the funds)."""
+        try:
+            try:
+                payment_payload = json.loads(payment_header)
+            except json.JSONDecodeError:
+                try:
+                    payment_payload = json.loads(base64.b64decode(payment_header))
+                except Exception:
+                    logger.error("Invalid x402 payment header for settlement")
+                    return False
+
+            # Shallow copy to avoid mutating caller's dict
+            actual_amount_micro = str(int(actual_amount * 1_000_000))
+            settle_requirements = {**requirements}
+            # Only override maxAmountRequired for upto scheme; exact scheme already has the fixed amount
+            if requirements.get("scheme", "upto") != "exact":
+                settle_requirements["maxAmountRequired"] = actual_amount_micro
+
+            headers = {
+                "Content-Type": "application/json",
+                "x-secret-key": config.THIRDWEB_SECRET_KEY,
+            }
+            if config.THIRDWEB_VAULT_ACCESS_TOKEN:
+                headers["x-vault-access-token"] = config.THIRDWEB_VAULT_ACCESS_TOKEN
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{THIRDWEB_X402_BASE}/settle",
+                    json={
+                        "x402Version": 2,
+                        "paymentPayload": payment_payload,
+                        "paymentRequirements": settle_requirements,
+                        "waitUntil": "confirmed",
+                    },
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as response:
+                    if response.status == 200:
+                        logger.info(f"x402 payment settled ({actual_amount_micro} micro-USDC)")
+                        return True
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"thirdweb settle error: {response.status} - {error_text}")
+                        return False
+
+        except Exception as e:
+            logger.error(f"x402 payment settlement failed: {e}")
             return False
 
     async def refresh_prices(self):
