@@ -28,7 +28,7 @@ logger = setup_logger(__name__)
 
 # Constants
 HEALTH_CHECK_INTERVAL = 30  # seconds
-TELEGRAM_REPORT_INTERVAL = 600  # 10 minutes
+TELEGRAM_REPORT_INTERVAL = 1800  # 30 minutes
 
 
 async def run_jobs():
