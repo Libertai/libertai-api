@@ -1,4 +1,5 @@
 import json
+from collections import defaultdict
 from http import HTTPStatus
 
 import httpx
@@ -30,8 +31,8 @@ limits = httpx.Limits(
 )
 client = httpx.AsyncClient(timeout=timeout, limits=limits)
 
-# Round-robin counter for load balancing
-round_robin_counters: dict[str, int] = {}
+# In-flight load tracking for least-connections balancing (weighted by request body size in bytes)
+inflight_load: defaultdict[str, int] = defaultdict(int)
 
 
 @router.on_event("shutdown")
@@ -162,23 +163,28 @@ async def proxy_request(
     # Prefer healthy servers, fall back to all if none healthy
     servers_pool = healthy_servers if healthy_servers else all_servers
 
-    # Round-robin load balancing: rotate server list based on counter
-    if model not in round_robin_counters:
-        round_robin_counters[model] = 0
+    # Capture weight for inflight tracking (must be same value for increment and decrement)
+    body_weight = len(body)
 
-    counter = round_robin_counters[model]
-    round_robin_counters[model] = (counter + 1) % len(servers_pool)
-
-    # Rotate list for round-robin
-    rotated_servers = servers_pool[counter:] + servers_pool[:counter]
-
-    # Try preferred server first (if healthy), then round-robin through others
+    # Least-connections load balancing: sort by in-flight load, prefer cookie server for KV cache locality
     servers_to_try = []
     if preferred_server and preferred_server in servers_pool:
+        # Cookie server always first when healthy (KV cache locality)
         servers_to_try.append(preferred_server)
-        servers_to_try.extend([s for s in rotated_servers if s != preferred_server])
+        # Remaining servers sorted by inflight load ascending for failover
+        remaining = sorted(
+            [s for s in servers_pool if s != preferred_server],
+            key=lambda s: inflight_load[s],
+        )
+        servers_to_try.extend(remaining)
     else:
-        servers_to_try = rotated_servers
+        # No cookie preference — pick least loaded
+        servers_to_try = sorted(servers_pool, key=lambda s: inflight_load[s])
+
+    logger.debug(
+        f"Load balancing for {model}: servers_to_try={[f'{s}(load={inflight_load[s]})' for s in servers_to_try]}, "
+        f"preferred={'yes' if preferred_server and preferred_server in servers_pool else 'no'}"
+    )
 
     last_error = None
 
@@ -186,10 +192,24 @@ async def proxy_request(
     for attempt, server in enumerate(servers_to_try, 1):
         url = f"{server}/{full_path}"
 
+        incremented = False
         try:
             logger.debug(f"Attempt {attempt}/{len(servers_to_try)}: Forwarding to {url}")
             req = client.build_request("POST", url, content=body, headers=headers, params=request.query_params)
+            inflight_load[server] += body_weight
+            incremented = True
             response = await client.send(req, stream=True)
+
+            # Retry on server errors (5xx) — upstream is broken, try next server
+            if response.status_code >= 500:
+                await response.aclose()
+                inflight_load[server] -= body_weight
+                incremented = False
+                logger.warning(
+                    f"Server error {response.status_code} from {url} (attempt {attempt}/{len(servers_to_try)})"
+                )
+                last_error = Exception(f"HTTP {response.status_code} from {server}")
+                continue
 
             # Success! Update the preferred instances map and create the cookie header
             preferred_instances_map[model] = server
@@ -208,12 +228,13 @@ async def proxy_request(
 
             if is_streaming_response:
 
-                async def generate_chunks():
+                async def generate_chunks(_server=server, _weight=body_weight):
                     try:
                         async for chunk in response.aiter_bytes():
                             yield chunk
                     finally:
                         await response.aclose()
+                        inflight_load[_server] -= _weight
 
                 return StreamingResponse(
                     content=generate_chunks(),
@@ -224,6 +245,7 @@ async def proxy_request(
             else:
                 response_bytes = await response.aread()
                 await response.aclose()
+                inflight_load[server] -= body_weight
 
                 return Response(
                     content=response_bytes,
@@ -233,6 +255,8 @@ async def proxy_request(
                 )
 
         except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException) as e:
+            if incremented:
+                inflight_load[server] -= body_weight
             # Connection error - try next server
             logger.warning(
                 f"Connection failed to {url} (attempt {attempt}/{len(servers_to_try)}): {type(e).__name__}: {e}"
@@ -241,6 +265,8 @@ async def proxy_request(
             continue
 
         except Exception as e:
+            if incremented:
+                inflight_load[server] -= body_weight
             # Other errors - log and fail immediately
             logger.error(f"Error forwarding request to {url}: {type(e).__name__}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Error forwarding request: {type(e).__name__}: {str(e)}")
