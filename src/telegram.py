@@ -51,7 +51,7 @@ class TelegramReporter:
             self._bot_started = True
             logger.info("Telegram bot started and listening for commands")
         except Exception as e:
-            logger.error(f"Error starting Telegram bot: {e}")
+            logger.error(f"Error starting Telegram bot: {e}", exc_info=True)
 
     @staticmethod
     async def generate_health_report() -> str:
@@ -129,7 +129,7 @@ class TelegramReporter:
             await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
         except Exception as e:
-            logger.error(f"Failed to process status command: {e}")
+            logger.error(f"Failed to process status command: {e}", exc_info=True)
             if update.message:
                 await update.message.reply_text("Error generating status report. Check server logs.")
 
@@ -145,7 +145,7 @@ class TelegramReporter:
                 kwargs["message_thread_id"] = int(config.TELEGRAM_TOPIC_ID)
             await self.bot.send_message(**kwargs)
         except Exception as e:
-            logger.error(f"Failed to send Telegram message: {e}")
+            logger.error(f"Failed to send Telegram message: {e}", exc_info=True)
 
     async def send_health_report(self) -> None:
         """
@@ -209,7 +209,7 @@ class TelegramReporter:
             logger.info(f"Health alert sent to Telegram: {total_unhealthy} servers are down")
 
         except Exception as e:
-            logger.error(f"Failed to send Telegram health report: {e}")
+            logger.error(f"Failed to send Telegram health report: {e}", exc_info=True)
 
 
 telegram_reporter = TelegramReporter()

@@ -57,7 +57,7 @@ class AlephService:
 
                     self._last_fetch_time = current_time
         except Exception as e:
-            logger.error(f"Error fetching Aleph data: {e}")
+            logger.error(f"Error fetching Aleph data: {e}", exc_info=True)
 
     def is_reasoning_model(self, model: str) -> bool:
         return model.lower() in self.reasoning_models

@@ -101,10 +101,10 @@ class ServerHealthMonitor:
                     if response.status == HTTPStatus.OK:
                         return ServerMetrics(is_healthy=True)
                     else:
-                        logger.error(f"Health status error for {url}: {response.status}")
+                        logger.warning(f"Health status error for {url}: {response.status}")
                         return ServerMetrics(is_healthy=False)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
-            logger.error(f"Health check error for {url}: {type(e).__name__}: {e or 'No error message'}")
+            logger.warning(f"Health check error for {url}: {type(e).__name__}: {e or 'No error message'}")
             return ServerMetrics(is_healthy=False)
 
     async def check_all_servers(self) -> None:

@@ -23,7 +23,7 @@ async def get_active_keys() -> set | None:
                     return None
 
     except Exception as e:
-        logger.error(f"Exception fetching accounts {str(e)}")
+        logger.error(f"Exception fetching accounts {str(e)}", exc_info=True)
         return None
 
     return keys
@@ -84,7 +84,7 @@ async def distribute_keys_to_clients():
                             error_text = await response.text()
                             logger.error(f"Error sending keys to {endpoint}: {response.status} - {error_text}")
                 except Exception as e:
-                    logger.error(f"Exception sending keys to {endpoint}: {e}")
+                    logger.error(f"Exception sending keys to {endpoint}: {e}", exc_info=True)
 
     except Exception as e:
-        logger.error(f"Error creating signed payload: {e}")
+        logger.error(f"Error creating signed payload: {e}", exc_info=True)

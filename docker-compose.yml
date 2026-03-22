@@ -6,24 +6,9 @@ services:
     container_name: libertai-api
     restart: unless-stopped
     command: poetry run uvicorn src.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 30 --timeout-graceful-shutdown 600 --loop uvloop --limit-concurrency 500
-    volumes:
-      - ./data:/data
-    ports:
-      - "8090:8000"
-    env_file:
-      - .env
-    networks:
-      - ip6net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/libertai/models"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-
-networks:
-  ip6net:
-    enable_ipv6: true
-    ipam:
-      config:
-        - subnet: 2001:db8::/64
+      start_period: 60s

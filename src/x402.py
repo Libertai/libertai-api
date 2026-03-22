@@ -74,7 +74,7 @@ class X402Manager:
                         logger.error(f"thirdweb /accepts error: {response.status} - {error_text}")
                         return None
         except Exception as e:
-            logger.error(f"thirdweb /accepts exception: {e}")
+            logger.error(f"thirdweb /accepts exception: {e}", exc_info=True)
             return None
 
     @staticmethod
@@ -191,7 +191,7 @@ class X402Manager:
                         return False
 
         except Exception as e:
-            logger.error(f"x402 payment verification failed: {e}")
+            logger.error(f"x402 payment verification failed: {e}", exc_info=True)
             return False
 
     @staticmethod
@@ -242,7 +242,7 @@ class X402Manager:
                         return False
 
         except Exception as e:
-            logger.error(f"x402 payment settlement failed: {e}")
+            logger.error(f"x402 payment settlement failed: {e}", exc_info=True)
             return False
 
     async def refresh_prices(self):
@@ -257,7 +257,7 @@ class X402Manager:
                     else:
                         logger.error(f"Error fetching x402 prices: {response.status}")
         except Exception as e:
-            logger.error(f"Exception fetching x402 prices: {e}")
+            logger.error(f"Exception fetching x402 prices: {e}", exc_info=True)
 
 
 x402_manager = X402Manager()
