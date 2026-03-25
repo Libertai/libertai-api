@@ -12,11 +12,11 @@ logger = setup_logger(__name__)
 class ServerMetrics:
     """Represents metrics for a server."""
 
-    def __init__(self, requests_processing: int = 0, requests_deferred: int = 0, is_healthy: bool = True, is_capable: bool = False):
+    def __init__(self, requests_processing: int = 0, requests_deferred: int = 0, is_healthy: bool = True, is_loaded: bool = False):
         self.requests_processing = requests_processing
         self.requests_deferred = requests_deferred
         self.is_healthy = is_healthy
-        self.is_capable = is_capable
+        self.is_loaded = is_loaded
 
     @property
     def load_score(self) -> int:
@@ -32,10 +32,10 @@ class ServerHealthMonitor:
         # Map of model name to list of URL strings
         self.model_urls: dict[str, list[str]] = dict(config.MODELS.items())
 
-        # Map of model name to list of healthy URL strings
+        # Map of model name to list of healthy URL strings (model loaded and ready)
         self.healthy_model_urls: dict[str, list[str]] = dict(config.MODELS.items())
 
-        # Map of model name to list of capable (202) URL strings
+        # Map of model name to list of capable URL strings (server up, model not loaded)
         self.capable_model_urls: dict[str, list[str]] = {}
 
         # Map of URL to metrics
@@ -47,15 +47,15 @@ class ServerHealthMonitor:
 
     def get_server_metrics(self, url: str) -> ServerMetrics:
         """Get metrics for a specific server URL."""
-        return self.server_metrics.get(url, ServerMetrics(is_healthy=False, is_capable=False))
+        return self.server_metrics.get(url, ServerMetrics(is_healthy=False, is_loaded=False))
 
     def get_least_busy_server(self, model_name: str, preferred_server: str | None = None) -> str | None:
         """
-        Get the least busy server for a model. Prefers healthy, falls back to capable.
+        Get the least busy server for a model. Prefers loaded, falls back to capable.
 
         Args:
             model_name: The model to find a server for
-            preferred_server: Optional preferred server URL (gets priority if healthy/capable)
+            preferred_server: Optional preferred server URL (gets priority if available)
 
         Returns:
             URL of the least busy server or None if no servers available
@@ -98,20 +98,20 @@ class ServerHealthMonitor:
             health_url = f"{url}/health/{model}"
             if model == "hermes-3-8b-tee":
                 # Hardcoded healthcheck for Hermes which is in an isolated TEE with an old version
-                return ServerMetrics(is_healthy=True, is_capable=True)
+                return ServerMetrics(is_healthy=True, is_loaded=True)
 
             async with aiohttp.ClientSession() as session:
                 async with session.get(health_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == HTTPStatus.OK:
-                        return ServerMetrics(is_healthy=True, is_capable=True)
+                        return ServerMetrics(is_healthy=True, is_loaded=True)
                     elif response.status == HTTPStatus.ACCEPTED:  # 202
-                        return ServerMetrics(is_healthy=False, is_capable=True)
+                        return ServerMetrics(is_healthy=True, is_loaded=False)
                     else:
                         logger.warning(f"Health status error for {url}: {response.status}")
-                        return ServerMetrics(is_healthy=False, is_capable=False)
+                        return ServerMetrics(is_healthy=False, is_loaded=False)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
             logger.warning(f"Health check error for {url}: {type(e).__name__}: {e or 'No error message'}")
-            return ServerMetrics(is_healthy=False, is_capable=False)
+            return ServerMetrics(is_healthy=False, is_loaded=False)
 
     async def check_all_servers(self) -> None:
         """Check health of all registered servers and update healthy/capable URLs per model."""
@@ -129,9 +129,9 @@ class ServerHealthMonitor:
                     if i < len(results):
                         metrics = results[i]
                         new_server_metrics[url] = metrics
-                        if metrics.is_healthy:
+                        if metrics.is_loaded:
                             new_healthy_model_urls[model].append(url)
-                        elif metrics.is_capable:
+                        elif metrics.is_healthy:
                             new_capable_model_urls[model].append(url)
 
         self.healthy_model_urls = new_healthy_model_urls
