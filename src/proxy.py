@@ -150,8 +150,9 @@ async def proxy_request(
         headers["x-payment"] = payment_header
         headers["x-payment-requirements"] = json.dumps(requirements[0])
 
-    # Get healthy servers, fall back to all servers if none healthy
+    # Three-tier server selection: healthy (200) > capable (202) > all (fallback)
     healthy_servers = server_health_monitor.healthy_model_urls.get(model, [])
+    capable_servers = server_health_monitor.capable_model_urls.get(model, [])
     all_servers = config.MODELS.get(model, [])
 
     if not all_servers:
@@ -160,8 +161,13 @@ async def proxy_request(
             detail=f"No server configured for model {model_name}",
         )
 
-    # Prefer healthy servers, fall back to all if none healthy
-    servers_pool = healthy_servers if healthy_servers else all_servers
+    # Build prioritized pool: healthy first, then capable, fall back to all
+    if healthy_servers:
+        servers_pool = healthy_servers
+    elif capable_servers:
+        servers_pool = capable_servers
+    else:
+        servers_pool = all_servers
 
     # Capture weight for inflight tracking (must be same value for increment and decrement)
     body_weight = len(body)
