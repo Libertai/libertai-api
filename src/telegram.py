@@ -54,59 +54,61 @@ class TelegramReporter:
             logger.error(f"Error starting Telegram bot: {e}", exc_info=True)
 
     @staticmethod
-    async def generate_health_report() -> str:
-        """Generate a complete health report including both healthy and unhealthy servers."""
-        # Get health information
-        healthy_model_urls = server_health_monitor.get_healthy_model_urls()
+    def _classify_servers(model: str, urls: list[str]) -> tuple[list[str], list[str], list[str]]:
+        """Classify servers into loaded, available, and down for a given model.
 
-        # Analyze health data
-        unhealthy_urls_by_model = {}
-        total_unhealthy = 0
+        Returns:
+            Tuple of (loaded_urls, available_urls, down_urls)
+        """
+        healthy = set(server_health_monitor.healthy_model_urls.get(model, []))
+        capable = set(server_health_monitor.capable_model_urls.get(model, []))
+        loaded = [url for url in urls if url in healthy]
+        available = [url for url in urls if url in capable]
+        down = [url for url in urls if url not in healthy and url not in capable]
+        return loaded, available, down
+
+    @staticmethod
+    async def generate_health_report() -> str:
+        """Generate a complete health report showing loaded, available, and down servers."""
+        total_down = 0
         total_urls = 0
 
         for model, urls in server_health_monitor.model_urls.items():
             if not urls:
                 continue
-
-            healthy = set(healthy_model_urls.get(model, []))
-            # Get URLs that are in the model_urls but not in healthy_urls
-            unhealthy = [url for url in urls if url not in healthy]
-
-            if unhealthy:
-                unhealthy_urls_by_model[model] = unhealthy
-                total_unhealthy += len(unhealthy)
-
+            _loaded, _available, down = TelegramReporter._classify_servers(model, urls)
+            total_down += len(down)
             total_urls += len(urls)
 
-        # Create the message
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        if total_unhealthy == 0 and total_urls > 0:
+        if total_down == 0 and total_urls > 0:
             message = f"✅ *LibertAI Health Report* ({now})\n\n"
-            message += f"*All {total_urls} servers are UP*\n\n"
+            message += "*All servers are UP*\n\n"
         else:
             message = f"🚨 *LibertAI Health Report* ({now})\n\n"
-            message += f"*{total_unhealthy} of {total_urls} servers are DOWN*\n\n"
+            message += f"*{total_down} of {total_urls} servers are DOWN*\n\n"
 
-        # List all model statuses, including healthy ones
         for model, urls in server_health_monitor.model_urls.items():
             if not urls:
                 continue
 
-            healthy = set(healthy_model_urls.get(model, []))
+            loaded, available, down = TelegramReporter._classify_servers(model, urls)
             message += f"*Model: {model}*\n"
 
-            # Show healthy URLs
-            if healthy:
-                message += f"✅ Healthy ({len(healthy)}/{len(urls)}):\n"
-                for url in healthy:
+            if loaded:
+                message += f"✅ Loaded ({len(loaded)}/{len(urls)}):\n"
+                for url in loaded:
                     message += f"- `{url}`\n"
 
-            # Show unhealthy URLs
-            unhealthy = [url for url in urls if url not in healthy]
-            if unhealthy:
-                message += f"❌ Unhealthy ({len(unhealthy)}/{len(urls)}):\n"
-                for url in unhealthy:
+            if available:
+                message += f"🔄 Available ({len(available)}/{len(urls)}):\n"
+                for url in available:
+                    message += f"- `{url}`\n"
+
+            if down:
+                message += f"❌ Down ({len(down)}/{len(urls)}):\n"
+                for url in down:
                     message += f"- `{url}`\n"
 
             message += "\n"
@@ -149,48 +151,40 @@ class TelegramReporter:
 
     async def send_health_report(self) -> None:
         """
-        Send a health report to the Telegram channel, but only if some URLs are down.
-        Show exactly which URLs are down per model.
+        Send a health report to the Telegram channel, but only if some servers are truly down.
+        Available (capable but not loaded) servers are NOT considered down.
         """
         if not self.bot or not config.TELEGRAM_CHAT_ID:
             return
 
         try:
-            # Get health information
-            healthy_model_urls = server_health_monitor.get_healthy_model_urls()
-
-            # Find unhealthy URLs
-            unhealthy_urls_by_model = {}
-            total_unhealthy = 0
+            down_by_model: dict[str, list[str]] = {}
+            total_down = 0
             total_urls = 0
 
             for model, urls in server_health_monitor.model_urls.items():
                 if not urls:
                     continue
 
-                healthy = set(healthy_model_urls.get(model, []))
-                # Get URLs that are in the model_urls but not in healthy_urls
-                unhealthy = [url for url in urls if url not in healthy]
-
-                if unhealthy:
-                    unhealthy_urls_by_model[model] = unhealthy
-                    total_unhealthy += len(unhealthy)
-
+                _loaded, _available, down = self._classify_servers(model, urls)
                 total_urls += len(urls)
 
-            # Only send message if there are unhealthy URLs
-            if len(unhealthy_urls_by_model.keys()) == 0 or total_urls == 0:
+                if down:
+                    down_by_model[model] = down
+                    total_down += len(down)
+
+            # Only send message if there are truly down servers
+            if total_down == 0 or total_urls == 0:
                 return
 
-            # Create the message
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             message = f"🚨 *LibertAI Health Alert* ({now})\n\n"
-            message += f"*{total_unhealthy} of {total_urls} servers are DOWN*\n\n"
+            message += f"*{total_down} of {total_urls} servers are DOWN*\n\n"
 
-            # List unhealthy URLs by model
-            for model, urls in unhealthy_urls_by_model.items():
-                message += f"*Model: {model}* ({len(urls)} / {len(server_health_monitor.model_urls[model])})\n"
-                for url in urls:
+            for model, down_urls in down_by_model.items():
+                all_urls = server_health_monitor.model_urls[model]
+                message += f"*Model: {model}* ({len(down_urls)} down / {len(all_urls)} total)\n"
+                for url in down_urls:
                     message += f"- `{url}`\n"
                 message += "\n"
 
@@ -206,7 +200,7 @@ class TelegramReporter:
                 await self.bot.send_message(
                     chat_id=config.TELEGRAM_CHAT_ID, text=message, parse_mode=ParseMode.MARKDOWN
                 )
-            logger.info(f"Health alert sent to Telegram: {total_unhealthy} servers are down")
+            logger.info(f"Health alert sent to Telegram: {total_down} servers are down")
 
         except Exception as e:
             logger.error(f"Failed to send Telegram health report: {e}", exc_info=True)
