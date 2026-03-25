@@ -47,35 +47,35 @@ class ServerHealthMonitor:
 
     def get_server_metrics(self, url: str) -> ServerMetrics:
         """Get metrics for a specific server URL."""
-        return self.server_metrics.get(url, ServerMetrics(is_healthy=False))
+        return self.server_metrics.get(url, ServerMetrics(is_healthy=False, is_capable=False))
 
     def get_least_busy_server(self, model_name: str, preferred_server: str | None = None) -> str | None:
         """
-        Get the least busy healthy server for a model.
+        Get the least busy server for a model. Prefers healthy, falls back to capable.
 
         Args:
             model_name: The model to find a server for
-            preferred_server: Optional preferred server URL (gets priority if healthy)
+            preferred_server: Optional preferred server URL (gets priority if healthy/capable)
 
         Returns:
-            URL of the least busy server or None if no healthy servers
+            URL of the least busy server or None if no servers available
         """
-        if model_name not in self.healthy_model_urls:
+        healthy_urls = self.healthy_model_urls.get(model_name, [])
+        capable_urls = self.capable_model_urls.get(model_name, [])
+        urls = healthy_urls if healthy_urls else capable_urls
+
+        if not urls:
             return None
 
-        healthy_urls = self.healthy_model_urls[model_name]
-        if not healthy_urls:
-            return None
-
-        # If preferred server is healthy use it
-        if preferred_server is not None and preferred_server in healthy_urls:
+        # If preferred server is available use it
+        if preferred_server is not None and preferred_server in urls:
             return preferred_server
 
         # Find the least busy server
         best_server = None
         best_load = float("inf")
 
-        for url in healthy_urls:
+        for url in urls:
             metrics = self.get_server_metrics(url)
             if metrics.load_score < best_load:
                 best_load = metrics.load_score
