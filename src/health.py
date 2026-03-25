@@ -111,7 +111,7 @@ class ServerHealthMonitor:
                         return ServerMetrics(is_healthy=False, is_capable=False)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
             logger.warning(f"Health check error for {url}: {type(e).__name__}: {e or 'No error message'}")
-            return ServerMetrics(is_healthy=False)
+            return ServerMetrics(is_healthy=False, is_capable=False)
 
     async def check_all_servers(self) -> None:
         """Check health of all registered servers and update healthy/capable URLs per model."""
