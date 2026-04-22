@@ -15,21 +15,23 @@ class TelegramReporter:
     def __init__(self) -> None:
         """Initialize the Telegram reporter."""
         self.bot = Bot(token=config.TELEGRAM_BOT_TOKEN) if config.TELEGRAM_BOT_TOKEN else None
-        self.app = None
+        self.app: Application | None = None
         self._bot_started = False
 
         if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
             logger.warning("Telegram bot token or chat ID not set. Telegram reporting disabled.")
         else:
-            # Set up the application with the bot token
-            self.app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+            self._build_app()
 
-            # Add command handler
-            self.app.add_handler(CommandHandler("status", TelegramReporter.status_command))
+    def _build_app(self) -> None:
+        """(Re)build the PTB Application. PTB's Application is single-shot — once
+        shut down, it cannot be re-initialized, so we rebuild on each start."""
+        self.app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+        self.app.add_handler(CommandHandler("status", TelegramReporter.status_command))
 
     async def start_bot(self) -> None:
-        """Start the bot polling for commands. Should only be called once per application."""
-        if not self.app:
+        """Start the bot polling for commands. Should only be called on the leader replica."""
+        if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
             logger.info("Telegram bot not configured, skipping startup")
             return
 
@@ -37,14 +39,14 @@ class TelegramReporter:
             logger.warning("Telegram bot already started, skipping")
             return
 
+        # Rebuild a fresh Application — a previously-shut-down one cannot be re-initialized.
+        if self.app is None:
+            self._build_app()
+
         try:
-            # Initialize bot
+            assert self.app is not None
             await self.app.initialize()
-
-            # Start the bot
             await self.app.start()
-
-            # Start polling for updates
             if self.app.updater:
                 await self.app.updater.start_polling(drop_pending_updates=True)
 
@@ -52,6 +54,25 @@ class TelegramReporter:
             logger.info("Telegram bot started and listening for commands")
         except Exception as e:
             logger.error(f"Error starting Telegram bot: {e}", exc_info=True)
+
+    async def stop_bot(self) -> None:
+        """Stop the bot polling. Called when this replica loses leadership."""
+        if not self.app or not self._bot_started:
+            return
+
+        try:
+            if self.app.updater and self.app.updater.running:
+                await self.app.updater.stop()
+            if self.app.running:
+                await self.app.stop()
+            await self.app.shutdown()
+            logger.info("Telegram bot stopped")
+        except Exception as e:
+            logger.error(f"Error stopping Telegram bot: {e}", exc_info=True)
+        finally:
+            # Discard the shut-down instance; a future start_bot will rebuild.
+            self.app = None
+            self._bot_started = False
 
     @staticmethod
     def _classify_servers(model: str, urls: list[str]) -> tuple[list[str], list[str], list[str]]:

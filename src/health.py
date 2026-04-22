@@ -1,12 +1,16 @@
 import asyncio
+import json
 from http import HTTPStatus
 
 import aiohttp
 
 from src.config import config
 from src.logger import setup_logger
+from src.redis_client import get_redis, k
 
 logger = setup_logger(__name__)
+
+REDIS_KEY = k("health", "snapshot")
 
 
 class ServerMetrics:
@@ -137,6 +141,45 @@ class ServerHealthMonitor:
         self.healthy_model_urls = new_healthy_model_urls
         self.capable_model_urls = new_capable_model_urls
         self.server_metrics = new_server_metrics
+
+        try:
+            snapshot = {
+                "healthy_model_urls": new_healthy_model_urls,
+                "capable_model_urls": new_capable_model_urls,
+                "server_metrics": {
+                    url: {
+                        "requests_processing": m.requests_processing,
+                        "requests_deferred": m.requests_deferred,
+                        "is_healthy": m.is_healthy,
+                        "is_loaded": m.is_loaded,
+                    }
+                    for url, m in new_server_metrics.items()
+                },
+            }
+            await get_redis().set(REDIS_KEY, json.dumps(snapshot))
+        except Exception as e:
+            logger.error(f"Failed to publish health snapshot to Redis: {e}", exc_info=True)
+
+    async def sync_from_redis(self) -> None:
+        """All replicas: refresh local snapshot from Redis."""
+        try:
+            raw = await get_redis().get(REDIS_KEY)
+            if not raw:
+                return
+            snap = json.loads(raw)
+            self.healthy_model_urls = {m: list(urls) for m, urls in snap.get("healthy_model_urls", {}).items()}
+            self.capable_model_urls = {m: list(urls) for m, urls in snap.get("capable_model_urls", {}).items()}
+            self.server_metrics = {
+                url: ServerMetrics(
+                    requests_processing=m.get("requests_processing", 0),
+                    requests_deferred=m.get("requests_deferred", 0),
+                    is_healthy=m.get("is_healthy", False),
+                    is_loaded=m.get("is_loaded", False),
+                )
+                for url, m in snap.get("server_metrics", {}).items()
+            }
+        except Exception as e:
+            logger.error(f"Failed to sync health snapshot from Redis: {e}", exc_info=True)
 
 
 server_health_monitor = ServerHealthMonitor()

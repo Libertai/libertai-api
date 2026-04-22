@@ -16,7 +16,8 @@ dependencies = [
     "gunicorn[http2] (>=25.0.1,<26.0.0)",
     "uvloop (>=0.22.1,<0.23.0)",
     "tiktoken (>=0.12.0,<0.13.0)",
-    "aleph-sdk-python (>=2.3.0,<3.0.0)"
+    "aleph-sdk-python (>=2.3.0,<3.0.0)",
+    "redis (>=5.2.0,<6.0.0)"
 ]
 
 [build-system]

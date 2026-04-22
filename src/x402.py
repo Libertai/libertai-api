@@ -9,8 +9,11 @@ from fastapi.responses import JSONResponse
 
 from src.config import config
 from src.logger import setup_logger
+from src.redis_client import get_redis, k
 
 logger = setup_logger(__name__)
+
+REDIS_KEY_PRICES = k("x402", "prices")
 
 THIRDWEB_X402_BASE = "https://api.thirdweb.com/v1/payments/x402"
 USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
@@ -246,7 +249,7 @@ class X402Manager:
             return False
 
     async def refresh_prices(self):
-        """Pull per-token prices from inference backend."""
+        """Leader-only: pull per-token prices from backend and publish to Redis."""
         try:
             async with aiohttp.ClientSession() as session:
                 session.headers["x-admin-token"] = config.BACKEND_SECRET_TOKEN
@@ -254,10 +257,23 @@ class X402Manager:
                     if response.status == 200:
                         self.prices = await response.json()
                         logger.debug(f"Refreshed x402 prices: {len(self.prices)} models")
+                        try:
+                            await get_redis().set(REDIS_KEY_PRICES, json.dumps(self.prices))
+                        except Exception as e:
+                            logger.error(f"Failed to publish x402 prices to Redis: {e}", exc_info=True)
                     else:
                         logger.error(f"Error fetching x402 prices: {response.status}")
         except Exception as e:
             logger.error(f"Exception fetching x402 prices: {e}", exc_info=True)
+
+    async def sync_from_redis(self):
+        """All replicas: refresh local snapshot from Redis."""
+        try:
+            raw = await get_redis().get(REDIS_KEY_PRICES)
+            if raw:
+                self.prices = json.loads(raw)
+        except Exception as e:
+            logger.error(f"Failed to sync x402 prices from Redis: {e}", exc_info=True)
 
 
 x402_manager = X402Manager()

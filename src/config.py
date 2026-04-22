@@ -20,9 +20,9 @@ class _Config:
     PUBLIC_BASE_URL: str
     THIRDWEB_VAULT_ACCESS_TOKEN: str
     ALEPH_SENDER_PRIVATE_KEY: str
+    REDIS_URL: str
 
     LOG_LEVEL: int
-    LOG_FILE: str | None
 
     def __init__(self):
         load_dotenv()
@@ -40,6 +40,7 @@ class _Config:
         self.PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
         self.THIRDWEB_VAULT_ACCESS_TOKEN = os.getenv("THIRDWEB_VAULT_ACCESS_TOKEN", "")
         self.ALEPH_SENDER_PRIVATE_KEY = os.getenv("ALEPH_SENDER_PRIVATE_KEY", "")
+        self.REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
@@ -48,7 +49,6 @@ class _Config:
         # Configure logging
         log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
         self.LOG_LEVEL = getattr(logging, log_level_str, logging.INFO)
-        self.LOG_FILE = os.getenv("LOG_FILE", None)
 
         if models_config:
             try:

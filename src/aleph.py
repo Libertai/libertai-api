@@ -1,14 +1,18 @@
+import json
 import time
 
 import aiohttp
 
 from src.logger import setup_logger
+from src.redis_client import get_redis, k
 
 logger = setup_logger(__name__)
 
 ALEPH_API_URL = (
     "https://api2.aleph.im/api/v0/aggregates/0xe1F7220D201C64871Cefb25320a8a588393eE508.json?keys=LTAI_PRICING"
 )
+
+REDIS_KEY = k("aleph", "snapshot")
 
 
 class AlephService:
@@ -19,7 +23,7 @@ class AlephService:
         self.reasoning_models: set[str] = set()
 
     async def refresh(self):
-        """Fetch redirections and model capabilities from Aleph."""
+        """Leader-only: fetch redirections and model capabilities from Aleph and publish to Redis."""
         current_time = time.time()
         if (current_time - self._last_fetch_time) < self._cache_ttl:
             return
@@ -56,8 +60,32 @@ class AlephService:
                     logger.debug(f"Loaded {len(self.reasoning_models)} reasoning models")
 
                     self._last_fetch_time = current_time
+
+                    try:
+                        await get_redis().set(
+                            REDIS_KEY,
+                            json.dumps(
+                                {
+                                    "redirections": self.redirections,
+                                    "reasoning_models": sorted(self.reasoning_models),
+                                }
+                            ),
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to publish Aleph snapshot to Redis: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Error fetching Aleph data: {e}", exc_info=True)
+
+    async def sync_from_redis(self):
+        """All replicas: refresh local snapshot from Redis."""
+        try:
+            raw = await get_redis().get(REDIS_KEY)
+            if raw:
+                snap = json.loads(raw)
+                self.redirections = dict(snap.get("redirections") or {})
+                self.reasoning_models = set(snap.get("reasoning_models") or [])
+        except Exception as e:
+            logger.error(f"Failed to sync Aleph snapshot from Redis: {e}", exc_info=True)
 
     def is_reasoning_model(self, model: str) -> bool:
         return model.lower() in self.reasoning_models

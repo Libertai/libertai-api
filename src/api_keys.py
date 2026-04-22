@@ -1,10 +1,15 @@
+import json
+
 import aiohttp
 
 from src.config import config
 from src.cryptography import create_signed_payload
 from src.logger import setup_logger
+from src.redis_client import get_redis, k
 
 logger = setup_logger(__name__)
+
+REDIS_KEY = k("api_keys")
 
 
 async def get_active_keys() -> set | None:
@@ -42,11 +47,30 @@ class KeysManager:
         return key in self.keys
 
     async def refresh_keys(self):
+        """Leader-only: fetch authoritative keys and publish to Redis."""
         new_keys = await get_active_keys()
         if new_keys is not None:
             self.keys = new_keys
+            try:
+                await get_redis().set(REDIS_KEY, json.dumps(sorted(new_keys)))
+            except Exception as e:
+                logger.error(f"Failed to publish keys to Redis: {e}", exc_info=True)
         # Also distribute keys to client servers
         await distribute_keys_to_clients()
+
+    async def sync_from_redis(self):
+        """All replicas: refresh local snapshot from Redis.
+
+        A missing key means "leader hasn't published yet" → keep current cache.
+        An empty list means "authoritatively empty" → clear local cache.
+        """
+        try:
+            raw = await get_redis().get(REDIS_KEY)
+            if raw is None:
+                return
+            self.keys = set(json.loads(raw))
+        except Exception as e:
+            logger.error(f"Failed to sync keys from Redis: {e}", exc_info=True)
 
 
 async def distribute_keys_to_clients():
