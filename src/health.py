@@ -16,7 +16,13 @@ REDIS_KEY = k("health", "snapshot")
 class ServerMetrics:
     """Represents metrics for a server."""
 
-    def __init__(self, requests_processing: int = 0, requests_deferred: int = 0, is_healthy: bool = True, is_loaded: bool = False):
+    def __init__(
+        self,
+        requests_processing: int = 0,
+        requests_deferred: int = 0,
+        is_healthy: bool = True,
+        is_loaded: bool = False,
+    ):
         self.requests_processing = requests_processing
         self.requests_deferred = requests_deferred
         self.is_healthy = is_healthy

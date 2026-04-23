@@ -24,7 +24,7 @@ import random
 import signal
 import statistics
 import time
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
 
 import httpx
@@ -158,18 +158,14 @@ async def one_request(
     headers = {"Authorization": f"Bearer {key}"}
     t0 = time.monotonic()
     try:
-        r = await client.post(
-            f"{url}/v1/chat/completions", json=body, headers=headers, timeout=timeout
-        )
+        r = await client.post(f"{url}/v1/chat/completions", json=body, headers=headers, timeout=timeout)
         latency = (time.monotonic() - t0) * 1000
         ok = 200 <= r.status_code < 300
         err = None if ok else r.text[:200]
         return Result(ok=ok, status=r.status_code, latency_ms=latency, model=model, error=err)
     except Exception as e:
         latency = (time.monotonic() - t0) * 1000
-        return Result(
-            ok=False, status=0, latency_ms=latency, model=model, error=f"{type(e).__name__}: {e}"
-        )
+        return Result(ok=False, status=0, latency_ms=latency, model=model, error=f"{type(e).__name__}: {e}")
 
 
 async def worker(
@@ -241,9 +237,7 @@ async def main() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
 
-    limits = httpx.Limits(
-        max_connections=args.concurrency * 2, max_keepalive_connections=args.concurrency
-    )
+    limits = httpx.Limits(max_connections=args.concurrency * 2, max_keepalive_connections=args.concurrency)
     async with httpx.AsyncClient(limits=limits) as client:
         if args.models:
             models = args.models
@@ -251,9 +245,7 @@ async def main() -> None:
             print(f"Fetching model list from {args.url}/v1/models ...", flush=True)
             models = await fetch_models(client, args.url, args.exclude)
         print(f"Using {len(models)} models: {', '.join(models[:10])}{'...' if len(models) > 10 else ''}")
-        print(
-            f"Stress-testing {args.url} for {args.duration}s with concurrency={args.concurrency}"
-        )
+        print(f"Stress-testing {args.url} for {args.duration}s with concurrency={args.concurrency}")
         print()
 
         async def stopper():
@@ -263,9 +255,7 @@ async def main() -> None:
                 stop.set()
 
         workers = [
-            asyncio.create_task(
-                worker(i, client, args.url, args.key, models, stop, stats, args.timeout)
-            )
+            asyncio.create_task(worker(i, client, args.url, args.key, models, stop, stats, args.timeout))
             for i in range(args.concurrency)
         ]
         tick_task = asyncio.create_task(ticker(stats, stop, args.report_every))

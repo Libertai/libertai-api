@@ -110,9 +110,7 @@ async def health():
     if not _ready:
         return JSONResponse(status_code=503, content={"status": "starting"})
 
-    healthy_models = {
-        model: urls for model, urls in server_health_monitor.healthy_model_urls.items() if urls
-    }
+    healthy_models = {model: urls for model, urls in server_health_monitor.healthy_model_urls.items() if urls}
 
     return {
         "status": "ok",

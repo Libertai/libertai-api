@@ -89,9 +89,7 @@ async def distribute_keys_to_clients():
                 try:
                     response = await client.post(endpoint, json=payload)
                     if response.status_code != 200:
-                        logger.error(
-                            f"Error sending keys to {endpoint}: {response.status_code} - {response.text}"
-                        )
+                        logger.error(f"Error sending keys to {endpoint}: {response.status_code} - {response.text}")
                 except Exception as e:
                     logger.error(f"Exception sending keys to {endpoint}: {e}", exc_info=True)
 

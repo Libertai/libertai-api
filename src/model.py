@@ -33,7 +33,12 @@ async def openai_models_list():
         model_entry = {"id": model_name, "object": "model", "created": current_timestamp, "owned_by": "libertai"}
         models_data.append(model_entry)
         if aleph_service.is_reasoning_model(model_name):
-            thinking_entry = {"id": f"{model_name}-thinking", "object": "model", "created": current_timestamp, "owned_by": "libertai"}
+            thinking_entry = {
+                "id": f"{model_name}-thinking",
+                "object": "model",
+                "created": current_timestamp,
+                "owned_by": "libertai",
+            }
             models_data.append(thinking_entry)
 
     response = {"object": "list", "data": models_data}
