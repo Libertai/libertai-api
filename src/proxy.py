@@ -155,38 +155,43 @@ async def proxy_request(
             detail=f"No server configured for model {model_name}",
         )
 
-    # Merge: healthy + capable + remaining unknown, deduplicated, preserving order
-    seen: set[str] = set()
-    servers_pool = []
-    for s in [*healthy_servers, *capable_servers, *all_servers]:
-        if s not in seen:
-            seen.add(s)
-            servers_pool.append(s)
-
     # Capture weight for inflight tracking (must be same value for increment and decrement)
     body_weight = len(body)
 
     # Snapshot inflight loads from Redis once for sorting
     loads = await get_all_loads()
 
-    # Least-connections load balancing: sort by in-flight load, prefer cookie server for KV cache locality
-    servers_to_try = []
-    if preferred_server and preferred_server in servers_pool:
-        # Cookie server always first when healthy (KV cache locality)
-        servers_to_try.append(preferred_server)
-        # Remaining servers sorted by inflight load ascending for failover
-        remaining = sorted(
-            [s for s in servers_pool if s != preferred_server],
-            key=lambda s: loads.get(s, 0),
-        )
-        servers_to_try.extend(remaining)
-    else:
-        # No cookie preference — pick least loaded
-        servers_to_try = sorted(servers_pool, key=lambda s: loads.get(s, 0))
+    # Tiered ordering: healthy > capable > unknown. Sort BY LOAD within each tier, not
+    # across tiers — otherwise a known-bad server with zero inflight load gets tried
+    # first over an actually-healthy server that happens to be busy.
+    healthy_set = set(healthy_servers)
+    capable_set = set(capable_servers)
+    unknown_servers = [s for s in all_servers if s not in healthy_set and s not in capable_set]
+
+    def by_load(urls: list[str]) -> list[str]:
+        return sorted(urls, key=lambda s: loads.get(s, 0))
+
+    tiered = [*by_load(healthy_servers), *by_load(capable_servers), *by_load(unknown_servers)]
+
+    # Deduplicate preserving tier order
+    seen: set[str] = set()
+    servers_to_try: list[str] = []
+    for s in tiered:
+        if s not in seen:
+            seen.add(s)
+            servers_to_try.append(s)
+
+    # Cookie stickiness (KV cache locality) — promote to front only if currently in the pool.
+    # If the cookie points to a known-bad server, ignore it.
+    if preferred_server and preferred_server in servers_to_try:
+        if preferred_server in healthy_set or preferred_server in capable_set:
+            servers_to_try.remove(preferred_server)
+            servers_to_try.insert(0, preferred_server)
+        # else: cookie server is unknown/bad — let tier ordering pick first
 
     logger.debug(
         f"Load balancing for {model}: servers_to_try={[f'{s}(load={loads.get(s, 0)})' for s in servers_to_try]}, "
-        f"preferred={'yes' if preferred_server and preferred_server in servers_pool else 'no'}"
+        f"preferred={'yes' if preferred_server and preferred_server in servers_to_try else 'no'}"
     )
 
     last_error = None
