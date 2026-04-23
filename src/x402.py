@@ -2,7 +2,7 @@ import asyncio
 import base64
 import json
 
-import aiohttp
+import httpx
 import tiktoken  # type: ignore[import-not-found]
 from fastapi import Response
 from fastapi.responses import JSONResponse
@@ -60,22 +60,16 @@ class X402Manager:
     async def _fetch_requirements(payload: dict) -> list[dict] | None:
         """Fetch payment requirements from thirdweb /accepts endpoint."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
                     f"{THIRDWEB_X402_BASE}/accepts",
                     json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "x-secret-key": config.THIRDWEB_SECRET_KEY,
-                    },
-                ) as response:
-                    if response.status == 402:
-                        data = await response.json()
-                        return data.get("accepts", [])
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"thirdweb /accepts error: {response.status} - {error_text}")
-                        return None
+                    headers={"x-secret-key": config.THIRDWEB_SECRET_KEY},
+                )
+                if response.status_code == 402:
+                    return response.json().get("accepts", [])
+                logger.error(f"thirdweb /accepts error: {response.status_code} - {response.text}")
+                return None
         except Exception as e:
             logger.error(f"thirdweb /accepts exception: {e}", exc_info=True)
             return None
@@ -173,25 +167,20 @@ class X402Manager:
                 "paymentRequirements": requirements,
             }
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
                     f"{THIRDWEB_X402_BASE}/verify",
                     json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "x-secret-key": config.THIRDWEB_SECRET_KEY,
-                    },
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        is_valid = data.get("isValid", False)
-                        if not is_valid:
-                            logger.warning(f"thirdweb verify returned invalid: {json.dumps(data)}")
-                        return is_valid
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"thirdweb verify error: {response.status} - {error_text}")
-                        return False
+                    headers={"x-secret-key": config.THIRDWEB_SECRET_KEY},
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    is_valid = data.get("isValid", False)
+                    if not is_valid:
+                        logger.warning(f"thirdweb verify returned invalid: {json.dumps(data)}")
+                    return is_valid
+                logger.error(f"thirdweb verify error: {response.status_code} - {response.text}")
+                return False
 
         except Exception as e:
             logger.error(f"x402 payment verification failed: {e}", exc_info=True)
@@ -217,15 +206,12 @@ class X402Manager:
             if requirements.get("scheme", "upto") != "exact":
                 settle_requirements["maxAmountRequired"] = actual_amount_micro
 
-            headers = {
-                "Content-Type": "application/json",
-                "x-secret-key": config.THIRDWEB_SECRET_KEY,
-            }
+            headers = {"x-secret-key": config.THIRDWEB_SECRET_KEY}
             if config.THIRDWEB_VAULT_ACCESS_TOKEN:
                 headers["x-vault-access-token"] = config.THIRDWEB_VAULT_ACCESS_TOKEN
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
                     f"{THIRDWEB_X402_BASE}/settle",
                     json={
                         "x402Version": 2,
@@ -234,15 +220,12 @@ class X402Manager:
                         "waitUntil": "confirmed",
                     },
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as response:
-                    if response.status == 200:
-                        logger.info(f"x402 payment settled ({actual_amount_micro} micro-USDC)")
-                        return True
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"thirdweb settle error: {response.status} - {error_text}")
-                        return False
+                )
+                if response.status_code == 200:
+                    logger.info(f"x402 payment settled ({actual_amount_micro} micro-USDC)")
+                    return True
+                logger.error(f"thirdweb settle error: {response.status_code} - {response.text}")
+                return False
 
         except Exception as e:
             logger.error(f"x402 payment settlement failed: {e}", exc_info=True)
@@ -251,18 +234,20 @@ class X402Manager:
     async def refresh_prices(self):
         """Leader-only: pull per-token prices from backend and publish to Redis."""
         try:
-            async with aiohttp.ClientSession() as session:
-                session.headers["x-admin-token"] = config.BACKEND_SECRET_TOKEN
-                async with session.get(f"{config.BACKEND_API_URL}/x402/prices") as response:
-                    if response.status == 200:
-                        self.prices = await response.json()
-                        logger.debug(f"Refreshed x402 prices: {len(self.prices)} models")
-                        try:
-                            await get_redis().set(REDIS_KEY_PRICES, json.dumps(self.prices))
-                        except Exception as e:
-                            logger.error(f"Failed to publish x402 prices to Redis: {e}", exc_info=True)
-                    else:
-                        logger.error(f"Error fetching x402 prices: {response.status}")
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"{config.BACKEND_API_URL}/x402/prices",
+                    headers={"x-admin-token": config.BACKEND_SECRET_TOKEN},
+                )
+                if response.status_code == 200:
+                    self.prices = response.json()
+                    logger.debug(f"Refreshed x402 prices: {len(self.prices)} models")
+                    try:
+                        await get_redis().set(REDIS_KEY_PRICES, json.dumps(self.prices))
+                    except Exception as e:
+                        logger.error(f"Failed to publish x402 prices to Redis: {e}", exc_info=True)
+                else:
+                    logger.error(f"Error fetching x402 prices: {response.status_code}")
         except Exception as e:
             logger.error(f"Exception fetching x402 prices: {e}", exc_info=True)
 

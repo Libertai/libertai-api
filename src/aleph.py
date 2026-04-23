@@ -1,7 +1,7 @@
 import json
 import time
 
-import aiohttp
+import httpx
 
 from src.logger import setup_logger
 from src.redis_client import get_redis, k
@@ -30,49 +30,49 @@ class AlephService:
 
         logger.debug("Fetching redirections from Aleph")
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(ALEPH_API_URL) as response:
-                    response.raise_for_status()
-                    data = await response.json()
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(ALEPH_API_URL)
+                response.raise_for_status()
+                data = response.json()
 
-                    pricing_data = data.get("data", {}).get("LTAI_PRICING", {})
-                    raw_redirections = pricing_data.get("redirections", [])
+            pricing_data = data.get("data", {}).get("LTAI_PRICING", {})
+            raw_redirections = pricing_data.get("redirections", [])
 
-                    new_map = {}
-                    for r in raw_redirections:
-                        from_id = r.get("from", "").lower()
-                        to_id = r.get("to", "").lower()
-                        if from_id and to_id:
-                            new_map[from_id] = to_id
+            new_map = {}
+            for r in raw_redirections:
+                from_id = r.get("from", "").lower()
+                to_id = r.get("to", "").lower()
+                if from_id and to_id:
+                    new_map[from_id] = to_id
 
-                    self.redirections = new_map
-                    logger.debug(f"Loaded {len(self.redirections)} model redirections")
+            self.redirections = new_map
+            logger.debug(f"Loaded {len(self.redirections)} model redirections")
 
-                    raw_models = pricing_data.get("models", [])
-                    new_reasoning = set()
-                    for m in raw_models:
-                        model_id = m.get("id", "").lower()
-                        reasoning = m.get("capabilities", {}).get("text", {}).get("reasoning", False)
-                        if model_id and reasoning:
-                            new_reasoning.add(model_id)
+            raw_models = pricing_data.get("models", [])
+            new_reasoning = set()
+            for m in raw_models:
+                model_id = m.get("id", "").lower()
+                reasoning = m.get("capabilities", {}).get("text", {}).get("reasoning", False)
+                if model_id and reasoning:
+                    new_reasoning.add(model_id)
 
-                    self.reasoning_models = new_reasoning
-                    logger.debug(f"Loaded {len(self.reasoning_models)} reasoning models")
+            self.reasoning_models = new_reasoning
+            logger.debug(f"Loaded {len(self.reasoning_models)} reasoning models")
 
-                    self._last_fetch_time = current_time
+            self._last_fetch_time = current_time
 
-                    try:
-                        await get_redis().set(
-                            REDIS_KEY,
-                            json.dumps(
-                                {
-                                    "redirections": self.redirections,
-                                    "reasoning_models": sorted(self.reasoning_models),
-                                }
-                            ),
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to publish Aleph snapshot to Redis: {e}", exc_info=True)
+            try:
+                await get_redis().set(
+                    REDIS_KEY,
+                    json.dumps(
+                        {
+                            "redirections": self.redirections,
+                            "reasoning_models": sorted(self.reasoning_models),
+                        }
+                    ),
+                )
+            except Exception as e:
+                logger.error(f"Failed to publish Aleph snapshot to Redis: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Error fetching Aleph data: {e}", exc_info=True)
 

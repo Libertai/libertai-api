@@ -1,6 +1,6 @@
 import json
 
-import aiohttp
+import httpx
 
 from src.config import config
 from src.cryptography import create_signed_payload
@@ -13,25 +13,20 @@ REDIS_KEY = k("api_keys")
 
 
 async def get_active_keys() -> set | None:
-    keys = set()
-
     try:
-        async with aiohttp.ClientSession() as session:
-            session.headers["x-admin-token"] = config.BACKEND_SECRET_TOKEN
-            path = "api-keys/admin/list"
-            async with session.get(f"{config.BACKEND_API_URL}/{path}") as response:
-                if response.status == 200:
-                    data = await response.json()
-                    keys.update(data.get("keys"))
-                else:
-                    logger.error(f"Error fetching accounts: {response.status}")
-                    return None
-
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{config.BACKEND_API_URL}/api-keys/admin/list",
+                headers={"x-admin-token": config.BACKEND_SECRET_TOKEN},
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return set(data.get("keys") or [])
+            logger.error(f"Error fetching accounts: {response.status_code}")
+            return None
     except Exception as e:
         logger.error(f"Exception fetching accounts {str(e)}", exc_info=True)
         return None
-
-    return keys
 
 
 class KeysManager:
@@ -77,36 +72,26 @@ async def distribute_keys_to_clients():
     """
     Distribute encrypted API keys to all client servers configured in MODELS.
     """
-
-    # Get all unique server URLs from the models config
     client_endpoints = set()
     for servers in config.MODELS.values():
         for server in servers:
-            # Add the libertai endpoint to each server URL
-            client_endpoint = f"{server}/libertai/api-keys"
-            client_endpoints.add(client_endpoint)
+            client_endpoints.add(f"{server}/libertai/api-keys")
 
-    # Get the current keys
     keys_manager = KeysManager()
     keys_list = list(keys_manager.keys)
 
-    # Create signed payload
     try:
         signed_payload = create_signed_payload({"keys": keys_list}, config.PRIVATE_KEY)
         payload = {"encrypted_payload": signed_payload}
 
-        # Send to all client endpoints
-        async with aiohttp.ClientSession() as session:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             for endpoint in client_endpoints:
                 try:
-                    async with session.post(
-                        endpoint, json=payload, headers={"Content-Type": "application/json"}
-                    ) as response:
-                        if response.status == 200:
-                            await response.json()
-                        else:
-                            error_text = await response.text()
-                            logger.error(f"Error sending keys to {endpoint}: {response.status} - {error_text}")
+                    response = await client.post(endpoint, json=payload)
+                    if response.status_code != 200:
+                        logger.error(
+                            f"Error sending keys to {endpoint}: {response.status_code} - {response.text}"
+                        )
                 except Exception as e:
                     logger.error(f"Exception sending keys to {endpoint}: {e}", exc_info=True)
 

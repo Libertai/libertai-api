@@ -2,7 +2,7 @@ import asyncio
 import json
 from http import HTTPStatus
 
-import aiohttp
+import httpx
 
 from src.config import config
 from src.logger import setup_logger
@@ -104,16 +104,16 @@ class ServerHealthMonitor:
                 # Hardcoded healthcheck for Hermes which is in an isolated TEE with an old version
                 return ServerMetrics(is_healthy=True, is_loaded=True)
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(health_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status == HTTPStatus.OK:
-                        return ServerMetrics(is_healthy=True, is_loaded=True)
-                    elif response.status == HTTPStatus.ACCEPTED:  # 202
-                        return ServerMetrics(is_healthy=True, is_loaded=False)
-                    else:
-                        logger.warning(f"Health status error for {url}: {response.status}")
-                        return ServerMetrics(is_healthy=False, is_loaded=False)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(health_url)
+                if response.status_code == HTTPStatus.OK:
+                    return ServerMetrics(is_healthy=True, is_loaded=True)
+                elif response.status_code == HTTPStatus.ACCEPTED:
+                    return ServerMetrics(is_healthy=True, is_loaded=False)
+                else:
+                    logger.warning(f"Health status error for {url}: {response.status_code}")
+                    return ServerMetrics(is_healthy=False, is_loaded=False)
+        except (httpx.HTTPError, ValueError) as e:
             logger.warning(f"Health check error for {url}: {type(e).__name__}: {e or 'No error message'}")
             return ServerMetrics(is_healthy=False, is_loaded=False)
 
