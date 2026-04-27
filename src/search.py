@@ -20,10 +20,16 @@ async def _forward(request: Request, path: str) -> Response:
     headers = dict(request.headers)
     headers.pop("host", None)
     headers.pop("content-length", None)
-    body = await request.body()
+    body = await request.body() if request.method != "GET" else None
 
     try:
-        upstream = await client.post(url, content=body, headers=headers, params=request.query_params)
+        upstream = await client.request(
+            request.method,
+            url,
+            content=body,
+            headers=headers,
+            params=request.query_params,
+        )
     except httpx.TimeoutException:
         return Response(content='{"error":"search service timeout"}', status_code=504, media_type="application/json")
     except httpx.HTTPError as e:
@@ -42,11 +48,11 @@ async def _forward(request: Request, path: str) -> Response:
     )
 
 
-@router.post("/search")
-async def search(request: Request) -> Response:
+@router.api_route("/search", methods=["GET", "POST"])
+async def search_root(request: Request) -> Response:
     return await _forward(request, "search")
 
 
-@router.post("/search/fetch")
-async def fetch(request: Request) -> Response:
-    return await _forward(request, "fetch")
+@router.api_route("/search/{path:path}", methods=["GET", "POST"])
+async def search_proxy(request: Request, path: str) -> Response:
+    return await _forward(request, path)
