@@ -22,6 +22,7 @@ from src.model import router as model_router
 from src.aleph_credits import router as aleph_credits_router
 from src.proxy import router as proxy_router, close_http_client
 from src.redis_client import close_redis
+from src.search import router as search_router, close_http_client as close_search_http_client
 from src.telegram import telegram_reporter
 from src.aleph import aleph_service
 from src.x402 import x402_manager
@@ -90,6 +91,7 @@ async def lifespan(_app: FastAPI):
             t.cancel()
         await asyncio.gather(leader_task, jobs_task, tg_task, return_exceptions=True)
         await close_http_client()
+        await close_search_http_client()
         await close_redis()
 
 
@@ -123,4 +125,5 @@ async def health():
 app.include_router(auth_router)
 app.include_router(model_router)
 app.include_router(aleph_credits_router)
+app.include_router(search_router)
 app.include_router(proxy_router)
