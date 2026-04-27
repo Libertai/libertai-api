@@ -21,6 +21,7 @@ class _Config:
     THIRDWEB_VAULT_ACCESS_TOKEN: str
     ALEPH_SENDER_PRIVATE_KEY: str
     REDIS_URL: str
+    SEARCH_SERVICE_URL: str
 
     LOG_LEVEL: int
 
@@ -41,6 +42,7 @@ class _Config:
         self.THIRDWEB_VAULT_ACCESS_TOKEN = os.getenv("THIRDWEB_VAULT_ACCESS_TOKEN", "")
         self.ALEPH_SENDER_PRIVATE_KEY = os.getenv("ALEPH_SENDER_PRIVATE_KEY", "")
         self.REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+        self.SEARCH_SERVICE_URL = os.getenv("SEARCH_SERVICE_URL", "https://search.libertai.io").rstrip("/")
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
