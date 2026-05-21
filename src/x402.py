@@ -42,6 +42,14 @@ class X402Manager:
         if "price_per_image" in info:
             return info["price_per_image"]
 
+        # Embedding models are input-only: price the `input` payload, no completion tokens.
+        if info.get("is_embedding"):
+            inputs = body.get("input", "")
+            input_text = inputs if isinstance(inputs, str) else json.dumps(inputs)
+            input_tokens = await asyncio.to_thread(lambda: len(_enc.encode(input_text)))
+            price = input_tokens / 1_000_000 * info["price_per_million_input_tokens"]
+            return max(price, 0.0001)
+
         messages = body.get("messages", [])
         messages_text = json.dumps(messages)
         input_tokens = await asyncio.to_thread(lambda: len(_enc.encode(messages_text)))
