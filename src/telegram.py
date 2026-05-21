@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 from telegram import Bot, Update
@@ -17,6 +18,9 @@ class TelegramReporter:
         self.bot = Bot(token=config.TELEGRAM_BOT_TOKEN) if config.TELEGRAM_BOT_TOKEN else None
         self.app: Application | None = None
         self._bot_started = False
+        # Serializes start/stop/ensure so the on_acquire callback and the
+        # supervisor loop can't drive the Application lifecycle concurrently.
+        self._lock = asyncio.Lock()
 
         if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
             logger.warning("Telegram bot token or chat ID not set. Telegram reporting disabled.")
@@ -29,35 +33,60 @@ class TelegramReporter:
         self.app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
         self.app.add_handler(CommandHandler("status", TelegramReporter.status_command))
 
+    def is_polling(self) -> bool:
+        """Whether this replica currently has a live Telegram command-polling loop."""
+        return bool(self.app and self._bot_started and self.app.updater and self.app.updater.running)
+
     async def start_bot(self) -> None:
-        """Start the bot polling for commands. Should only be called on the leader replica."""
+        """Start the bot polling for commands. Should only be called on the leader replica.
+
+        Idempotent and self-healing: a no-op when already polling, otherwise it
+        discards any stale Application, builds a fresh one, and — crucially — leaves
+        clean state if startup fails so the supervisor can retry on its next tick."""
         if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
             logger.info("Telegram bot not configured, skipping startup")
             return
 
-        if self._bot_started:
-            logger.warning("Telegram bot already started, skipping")
-            return
+        async with self._lock:
+            if self.is_polling():
+                return
 
-        # Rebuild a fresh Application — a previously-shut-down one cannot be re-initialized.
-        if self.app is None:
+            # Discard any partial/stale instance first — a previously-initialized
+            # Application cannot be re-initialized.
+            await self._teardown_app()
             self._build_app()
 
-        try:
-            assert self.app is not None
-            await self.app.initialize()
-            await self.app.start()
-            if self.app.updater:
-                await self.app.updater.start_polling(drop_pending_updates=True)
+            try:
+                assert self.app is not None
+                await self.app.initialize()
+                await self.app.start()
+                if self.app.updater:
+                    await self.app.updater.start_polling(drop_pending_updates=True)
 
-            self._bot_started = True
-            logger.info("Telegram bot started and listening for commands")
-        except Exception as e:
-            logger.error(f"Error starting Telegram bot: {e}", exc_info=True)
+                self._bot_started = True
+                logger.info("Telegram bot started and listening for commands")
+            except Exception as e:
+                logger.error(f"Error starting Telegram bot: {e}", exc_info=True)
+                # Leave clean state so a later start_bot() rebuilds from scratch.
+                await self._teardown_app()
+
+    async def ensure_polling(self) -> None:
+        """Supervisor entry point: (re)start polling if it isn't running. Heals a
+        poller that failed to start or died while this replica remained leader."""
+        if self.is_polling():
+            return
+        logger.warning("Telegram bot not polling while leader; (re)starting")
+        await self.start_bot()
 
     async def stop_bot(self) -> None:
         """Stop the bot polling. Called when this replica loses leadership."""
-        if not self.app or not self._bot_started:
+        async with self._lock:
+            await self._teardown_app()
+
+    async def _teardown_app(self) -> None:
+        """Stop polling and shut down the Application if present. Caller must hold
+        ``self._lock`` (or run before any concurrent lifecycle access, e.g. startup)."""
+        if self.app is None:
             return
 
         try:

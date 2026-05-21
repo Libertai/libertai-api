@@ -1,3 +1,5 @@
+from typing import Awaitable, cast
+
 from src.logger import setup_logger
 from src.redis_client import get_redis, k
 
@@ -10,7 +12,9 @@ LOAD_TTL = 600
 
 async def get_all_loads() -> dict[str, int]:
     try:
-        data = await get_redis().hgetall(LOAD_KEY)
+        # redis-py types hgetall as Awaitable[dict] | dict; on the async client it is
+        # always awaitable, so narrow it for mypy.
+        data = await cast("Awaitable[dict[str, str]]", get_redis().hgetall(LOAD_KEY))
         return {url: int(v) for url, v in data.items()}
     except Exception as e:
         logger.error(f"Failed to read inflight loads from Redis: {e}", exc_info=True)
