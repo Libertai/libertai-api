@@ -32,10 +32,43 @@ class TelegramReporter:
         shut down, it cannot be re-initialized, so we rebuild on each start."""
         self.app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
         self.app.add_handler(CommandHandler("status", TelegramReporter.status_command))
+        self.app.add_error_handler(TelegramReporter._on_error)
+        # Fail loud if a PTB upgrade ever removes the internal polling-task slot our
+        # liveness check relies on — otherwise is_polling() silently degrades to the
+        # unreliable running flag (the original bug).
+        if self.app.updater is not None and not hasattr(self.app.updater, self._POLLING_TASK_ATTR):
+            logger.warning(
+                "PTB Updater lacks %s; poller liveness degraded to the running flag", self._POLLING_TASK_ATTR
+            )
+
+    # PTB (pinned 22.x) runs polling in this name-mangled background task on the
+    # Updater. ``updater.running`` is only a flag set True on start and reset
+    # solely by a clean ``stop()`` — it stays True even after the task dies
+    # abnormally (cancellation, InvalidToken, unexpected error). So the task's
+    # own state, not the flag, is the real liveness signal.
+    _POLLING_TASK_ATTR = "_Updater__polling_task"
+
+    def _polling_task(self) -> "asyncio.Task | None":
+        updater = self.app.updater if self.app else None
+        task = getattr(updater, self._POLLING_TASK_ATTR, None) if updater else None
+        return task if isinstance(task, asyncio.Task) else None
 
     def is_polling(self) -> bool:
-        """Whether this replica currently has a live Telegram command-polling loop."""
-        return bool(self.app and self._bot_started and self.app.updater and self.app.updater.running)
+        """Whether this replica has a genuinely live command-polling loop.
+
+        Requires the dispatch processor (``app.running``) AND the update fetcher
+        flag (``updater.running``) AND — crucially — that the fetcher's background
+        task is still running. Trusting ``updater.running`` alone is what let a
+        dead poller masquerade as healthy: the flag stayed True after the task
+        died, so the supervisor never restarted it and updates piled up unread."""
+        if not (self.app and self._bot_started and self.app.running and self.app.updater and self.app.updater.running):
+            return False
+        task = self._polling_task()
+        if task is None:
+            # Attribute missing (PTB internals changed) — fall back to the flag
+            # rather than restart-loop forever. The <23 pin guards this.
+            return True
+        return not task.done()
 
     async def start_bot(self) -> None:
         """Start the bot polling for commands. Should only be called on the leader replica.
@@ -75,8 +108,22 @@ class TelegramReporter:
         poller that failed to start or died while this replica remained leader."""
         if self.is_polling():
             return
+        self._log_dead_polling_task()
         logger.warning("Telegram bot not polling while leader; (re)starting")
         await self.start_bot()
+
+    def _log_dead_polling_task(self) -> None:
+        """If the polling task died while leaving ``updater.running`` stale-True,
+        surface why — this is the trigger we couldn't see before."""
+        task = self._polling_task()
+        if task is None or not task.done():
+            return
+        if task.cancelled():
+            logger.error("Telegram polling task was cancelled but updater.running stayed True")
+            return
+        exc = task.exception()  # safe: task is done and not cancelled
+        if exc is not None:
+            logger.error(f"Telegram polling task died: {exc!r} (updater.running stayed True)", exc_info=exc)
 
     async def stop_bot(self) -> None:
         """Stop the bot polling. Called when this replica loses leadership."""
@@ -166,24 +213,40 @@ class TelegramReporter:
         return message
 
     @staticmethod
+    async def _on_error(_update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Catch-all so handler exceptions surface in logs instead of being silently dropped."""
+        logger.error(f"Unhandled error in Telegram handler: {context.error}", exc_info=context.error)
+
+    @staticmethod
     async def status_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Send a health status report when the /status command is received."""
+        """Reply with a health report when /status is received.
+
+        Once this handler runs it ALWAYS replies — report on success, the error
+        text on failure — so a silent "read but no response" can only mean the
+        update never reached the handler (dispatch/poller layer), not a swallowed
+        exception here. The Markdown reply falls back to plain text so a parse
+        error never eats the response."""
+        if not update.effective_chat or not update.message:
+            logger.warning("Received status command with missing chat or message")
+            return
+
+        thread_id = update.message.message_thread_id
+        logger.info(f"/status received (chat={update.effective_chat.id}, thread={thread_id})")
+
         try:
-            # Ensure we have the necessary objects
-            if not update.effective_chat or not update.message:
-                logger.warning("Received status command with missing chat or message")
-                return
-
-            # Generate health report
             message = await TelegramReporter.generate_health_report()
-
-            # Reply to the command with the health report
-            await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
-
         except Exception as e:
-            logger.error(f"Failed to process status command: {e}", exc_info=True)
-            if update.message:
-                await update.message.reply_text("Error generating status report. Check server logs.")
+            logger.error(f"Failed to generate status report: {e}", exc_info=True)
+            await update.message.reply_text(f"Error generating status report: {e}")
+            return
+
+        try:
+            await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            # Most likely a Markdown parse error — resend as plain text so the
+            # report still gets through, and record what tripped the parser.
+            logger.warning(f"Markdown reply failed ({e}); resending as plain text")
+            await update.message.reply_text(message)
 
     async def send_message(self, text: str) -> None:
         """Send a plain text message to the configured Telegram channel."""
