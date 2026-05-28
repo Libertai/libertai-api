@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from src.config import config
 from src.logger import setup_logger
-from src.telegram import telegram_reporter
+from src.telegram import send_message
 from src.x402 import x402_manager
 
 logger = setup_logger(__name__)
@@ -120,7 +120,7 @@ async def purchase_aleph_credits(request: Request, body: AlephCreditsRequest):
             f"(amount={body.amount}, credits={credit_amount}): {e}",
             exc_info=True,
         )
-        await telegram_reporter.send_message(
+        await send_message(
             f"CRITICAL: Payment settled but credit transfer failed\n"
             f"Address: {body.address}\n"
             f"Amount: ${body.amount} ({credit_amount} credits)\n"

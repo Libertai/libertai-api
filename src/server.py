@@ -23,17 +23,18 @@ from src.aleph_credits import router as aleph_credits_router
 from src.proxy import router as proxy_router, close_http_client
 from src.redis_client import close_redis
 from src.search import router as search_router, close_http_client as close_search_http_client
-from src.telegram import telegram_reporter
 from src.aleph import aleph_service
 from src.x402 import x402_manager
+
+# The Telegram bot now runs as its own dokploy service (replicas: 1, entrypoint
+# `python -m src.bot`), so the web replicas no longer poll Telegram or run the
+# alert/supervisor loops. They still need leader election for run_jobs.
 
 keys_manager = KeysManager()
 logger = setup_logger(__name__)
 
 # Constants
 HEALTH_CHECK_INTERVAL = 30  # seconds
-TELEGRAM_REPORT_INTERVAL = 1800  # 30 minutes
-BOT_SUPERVISE_INTERVAL = 30  # seconds
 
 # Set to True after first successful job cycle
 _ready = False
@@ -63,49 +64,18 @@ async def run_jobs():
         await asyncio.sleep(HEALTH_CHECK_INTERVAL)
 
 
-async def run_telegram_reporting():
-    """Leader-only: periodic Telegram health reporting."""
-    while True:
-        if leader.is_leader:
-            try:
-                await telegram_reporter.send_health_report()
-            except Exception as e:
-                logger.error(f"Error in Telegram reporting: {e}")
-        await asyncio.sleep(TELEGRAM_REPORT_INTERVAL)
-
-
-async def supervise_telegram_bot():
-    """Leader-only: keep command polling alive. on_acquire starts the bot on a
-    leadership change, but a poller that fails to start (e.g. a transient getUpdates
-    409 during a rolling deploy) or later dies would otherwise never recover while
-    this replica keeps the lock — so re-ensure it on a short interval."""
-    while True:
-        if leader.is_leader:
-            try:
-                await telegram_reporter.ensure_polling()
-            except Exception as e:
-                logger.error(f"Error supervising Telegram bot: {e}", exc_info=True)
-        await asyncio.sleep(BOT_SUPERVISE_INTERVAL)
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    leader.on_acquire(telegram_reporter.start_bot)
-    leader.on_release(telegram_reporter.stop_bot)
-
     leader_task = asyncio.create_task(leader.run())
     jobs_task = asyncio.create_task(run_jobs())
-    tg_task = asyncio.create_task(run_telegram_reporting())
-    bot_task = asyncio.create_task(supervise_telegram_bot())
 
     try:
         yield
     finally:
-        # leader.shutdown() fires on_release → stop_bot(), so no explicit stop_bot needed.
         await leader.shutdown()
-        for t in (leader_task, jobs_task, tg_task, bot_task):
+        for t in (leader_task, jobs_task):
             t.cancel()
-        await asyncio.gather(leader_task, jobs_task, tg_task, bot_task, return_exceptions=True)
+        await asyncio.gather(leader_task, jobs_task, return_exceptions=True)
         await close_http_client()
         await close_search_http_client()
         await close_redis()
