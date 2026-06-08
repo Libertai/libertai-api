@@ -42,6 +42,13 @@ class X402Manager:
         if "price_per_image" in info:
             return info["price_per_image"]
 
+        # Audio (TTS) models are billed on the raw input character count (NOT tokens).
+        if info.get("is_audio"):
+            inputs = body.get("input", "")
+            input_text = inputs if isinstance(inputs, str) else json.dumps(inputs)
+            price = len(input_text) / 1_000_000 * info["price_per_million_input_characters"]
+            return max(price, 0.0001)
+
         # Embedding models are input-only: price the `input` payload, no completion tokens.
         if info.get("is_embedding"):
             inputs = body.get("input", "")
