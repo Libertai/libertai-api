@@ -12,6 +12,7 @@ from src.health import server_health_monitor
 from src.load_tracker import adjust as load_adjust, get_all_loads
 from src.logger import setup_logger
 from src.aleph import aleph_service
+from src.rate_limit import enforce_chat_key_rate_limit
 from src.x402 import x402_manager
 
 router = APIRouter(tags=["Proxy"])
@@ -143,6 +144,8 @@ async def proxy_request(
         headers["authorization"] = f"Bearer {config.X402_API_KEY}"
         headers["x-payment"] = payment_header
         headers["x-payment-requirements"] = json.dumps(requirements[0])
+    else:
+        await enforce_chat_key_rate_limit(request)
 
     # Build ordered server pool: healthy first, then capable, then remaining
     healthy_servers = server_health_monitor.healthy_model_urls.get(model, [])

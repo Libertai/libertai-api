@@ -22,6 +22,9 @@ class _Config:
     ALEPH_SENDER_PRIVATE_KEY: str
     REDIS_URL: str
     SEARCH_SERVICE_URL: str
+    CHAT_RATE_LIMIT_PER_MINUTE: int
+    CHAT_RATE_LIMIT_PER_DAY: int
+    CHAT_SEARCH_RATE_LIMIT_PER_DAY: int
 
     LOG_LEVEL: int
 
@@ -43,6 +46,9 @@ class _Config:
         self.ALEPH_SENDER_PRIVATE_KEY = os.getenv("ALEPH_SENDER_PRIVATE_KEY", "")
         self.REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
         self.SEARCH_SERVICE_URL = os.getenv("SEARCH_SERVICE_URL", "https://search.libertai.io").rstrip("/")
+        self.CHAT_RATE_LIMIT_PER_MINUTE = int(os.getenv("CHAT_RATE_LIMIT_PER_MINUTE", "30"))
+        self.CHAT_RATE_LIMIT_PER_DAY = int(os.getenv("CHAT_RATE_LIMIT_PER_DAY", "1500"))
+        self.CHAT_SEARCH_RATE_LIMIT_PER_DAY = int(os.getenv("CHAT_SEARCH_RATE_LIMIT_PER_DAY", "50"))
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")

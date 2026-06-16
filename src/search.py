@@ -3,6 +3,7 @@ from fastapi import APIRouter, Request, Response
 
 from src.config import config
 from src.logger import setup_logger
+from src.rate_limit import enforce_chat_key_rate_limit
 
 router = APIRouter(tags=["Search"])
 logger = setup_logger(__name__)
@@ -16,6 +17,8 @@ async def close_http_client() -> None:
 
 
 async def _forward(request: Request, path: str) -> Response:
+    await enforce_chat_key_rate_limit(request, search=True)
+
     url = f"{config.SEARCH_SERVICE_URL}/{path}"
     headers = dict(request.headers)
     headers.pop("host", None)

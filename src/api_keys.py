@@ -10,9 +10,10 @@ from src.redis_client import get_redis, k
 logger = setup_logger(__name__)
 
 REDIS_KEY = k("api_keys")
+REDIS_KEY_TYPES = k("api_key_types")
 
 
-async def get_active_keys() -> set | None:
+async def get_active_keys() -> tuple[set[str], dict[str, str]] | None:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
@@ -21,7 +22,14 @@ async def get_active_keys() -> set | None:
             )
             if response.status_code == 200:
                 data = response.json()
-                return set(data.get("keys") or [])
+                keys = set(data.get("keys") or [])
+                raw_key_types = data.get("key_types") or {}
+                key_types = {
+                    key: str(key_type)
+                    for key, key_type in raw_key_types.items()
+                    if key in keys and isinstance(key_type, str)
+                }
+                return keys, key_types
             logger.error(f"Error fetching accounts: {response.status_code}")
             return None
     except Exception as e:
@@ -32,6 +40,7 @@ async def get_active_keys() -> set | None:
 class KeysManager:
     _instance = None
     keys: set[str] = set()
+    key_types: dict[str, str] = {}
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -41,13 +50,25 @@ class KeysManager:
     def key_exists(self, key):
         return key in self.keys
 
+    def key_type_for(self, key: str) -> str | None:
+        if key not in self.keys:
+            return None
+        return self.key_types.get(key)
+
     async def refresh_keys(self):
         """Leader-only: fetch authoritative keys and publish to Redis."""
-        new_keys = await get_active_keys()
-        if new_keys is not None:
+        active_keys = await get_active_keys()
+        if active_keys is not None:
+            new_keys, key_types = active_keys
             self.keys = new_keys
+            self.key_types = key_types
             try:
-                await get_redis().set(REDIS_KEY, json.dumps(sorted(new_keys)))
+                redis = get_redis()
+                await redis.set(REDIS_KEY, json.dumps(sorted(new_keys)))
+                await redis.set(
+                    REDIS_KEY_TYPES,
+                    json.dumps({key: key_types[key] for key in sorted(new_keys) if key in key_types}),
+                )
             except Exception as e:
                 logger.error(f"Failed to publish keys to Redis: {e}", exc_info=True)
         # Also distribute keys to client servers
@@ -60,10 +81,23 @@ class KeysManager:
         An empty list means "authoritatively empty" → clear local cache.
         """
         try:
-            raw = await get_redis().get(REDIS_KEY)
+            redis = get_redis()
+            raw = await redis.get(REDIS_KEY)
             if raw is None:
                 return
-            self.keys = set(json.loads(raw))
+            keys = set(json.loads(raw))
+            raw_key_types = await redis.get(REDIS_KEY_TYPES)
+            key_types = {}
+            if raw_key_types is not None:
+                loaded_key_types = json.loads(raw_key_types)
+                if isinstance(loaded_key_types, dict):
+                    key_types = {
+                        key: str(key_type)
+                        for key, key_type in loaded_key_types.items()
+                        if key in keys and isinstance(key_type, str)
+                    }
+            self.keys = keys
+            self.key_types = key_types
         except Exception as e:
             logger.error(f"Failed to sync keys from Redis: {e}", exc_info=True)
 
