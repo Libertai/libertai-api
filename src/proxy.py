@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from src.config import config
 from src.health import server_health_monitor
+from src.image_stripping import IMAGE_STRIP_PATHS, strip_images
 from src.load_tracker import adjust as load_adjust, get_all_loads
 from src.logger import setup_logger
 from src.aleph import aleph_service
@@ -90,8 +91,13 @@ async def proxy_request(
     headers = dict(request.headers)
     body = await request.body()
 
-    # Update request body if model changed or needs thinking kwargs
-    needs_body_update = (model != model_name.lower()) or aleph_service.is_reasoning_model(model)
+    # Strip image content for text-only models (avoids upstream errors on non-vision models)
+    should_strip_images = full_path in IMAGE_STRIP_PATHS and not aleph_service.is_vision_model(model)
+
+    # Update request body if model changed, needs thinking kwargs, or needs image stripping
+    needs_body_update = (
+        (model != model_name.lower()) or aleph_service.is_reasoning_model(model) or should_strip_images
+    )
     if needs_body_update:
         try:
             body_json = json.loads(body)
@@ -99,6 +105,11 @@ async def proxy_request(
             # Reasoning models: disable thinking by default, enable only with -thinking suffix
             if aleph_service.is_reasoning_model(model) and not thinking_requested:
                 body_json.setdefault("chat_template_kwargs", {}).setdefault("enable_thinking", False)
+            # Non-vision models: drop any image parts so the upstream doesn't reject the request
+            if should_strip_images:
+                body_json, stripped = strip_images(full_path, body_json)
+                if stripped:
+                    logger.debug(f"Stripped image content for non-vision model '{model}' on {full_path}")
             body = json.dumps(body_json).encode()
             headers["content-length"] = str(len(body))
         except json.JSONDecodeError:
