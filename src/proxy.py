@@ -118,6 +118,14 @@ async def proxy_request(
     # Clean up headers
     headers.pop("host", None)
 
+    # Transparent compression passthrough: only let the upstream compress with what the
+    # client accepts. If the client sent no Accept-Encoding, force identity so httpx
+    # doesn't inject its own (gzip/br) — otherwise we'd forward a body encoded with
+    # something the client never asked for. The response is streamed back raw (still
+    # encoded) below, with the upstream Content-Encoding header left intact.
+    if "accept-encoding" not in headers:
+        headers["accept-encoding"] = "identity"
+
     # Conditional auth: if no Authorization header, use x402 payment flow
     has_auth = request.headers.get("authorization")
     if not has_auth:
@@ -249,7 +257,9 @@ async def proxy_request(
 
                 async def generate_chunks(_server=server, _weight=body_weight):
                     try:
-                        async for chunk in response.aiter_bytes():
+                        # aiter_raw (not aiter_bytes) so we forward the body exactly as the
+                        # upstream encoded it, matching the Content-Encoding header we pass on.
+                        async for chunk in response.aiter_raw():
                             yield chunk
                     finally:
                         await response.aclose()
@@ -262,7 +272,8 @@ async def proxy_request(
                     media_type=response.headers.get("Content-Type", ""),
                 )
             else:
-                response_bytes = await response.aread()
+                # Raw bytes, still encoded — kept consistent with the Content-Encoding header.
+                response_bytes = b"".join([chunk async for chunk in response.aiter_raw()])
                 await response.aclose()
                 await load_adjust(server, -body_weight)
 
