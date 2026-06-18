@@ -21,6 +21,7 @@ class AlephService:
         self._cache_ttl = 300  # 5 minutes
         self.redirections: dict[str, str] = {}
         self.reasoning_models: set[str] = set()
+        self.vision_models: set[str] = set()
 
     async def refresh(self):
         """Leader-only: fetch redirections and model capabilities from Aleph and publish to Redis."""
@@ -50,14 +51,18 @@ class AlephService:
 
             raw_models = pricing_data.get("models", [])
             new_reasoning = set()
+            new_vision = set()
             for m in raw_models:
                 model_id = m.get("id", "").lower()
-                reasoning = m.get("capabilities", {}).get("text", {}).get("reasoning", False)
-                if model_id and reasoning:
+                text_caps = m.get("capabilities", {}).get("text", {})
+                if model_id and text_caps.get("reasoning", False):
                     new_reasoning.add(model_id)
+                if model_id and text_caps.get("vision", False):
+                    new_vision.add(model_id)
 
             self.reasoning_models = new_reasoning
-            logger.debug(f"Loaded {len(self.reasoning_models)} reasoning models")
+            self.vision_models = new_vision
+            logger.debug(f"Loaded {len(self.reasoning_models)} reasoning models, {len(self.vision_models)} vision models")
 
             self._last_fetch_time = current_time
 
@@ -68,6 +73,7 @@ class AlephService:
                         {
                             "redirections": self.redirections,
                             "reasoning_models": sorted(self.reasoning_models),
+                            "vision_models": sorted(self.vision_models),
                         }
                     ),
                 )
@@ -84,11 +90,15 @@ class AlephService:
                 snap = json.loads(raw)
                 self.redirections = dict(snap.get("redirections") or {})
                 self.reasoning_models = set(snap.get("reasoning_models") or [])
+                self.vision_models = set(snap.get("vision_models") or [])
         except Exception as e:
             logger.error(f"Failed to sync Aleph snapshot from Redis: {e}", exc_info=True)
 
     def is_reasoning_model(self, model: str) -> bool:
         return model.lower() in self.reasoning_models
+
+    def is_vision_model(self, model: str) -> bool:
+        return model.lower() in self.vision_models
 
     def resolve(self, model: str) -> str:
         """Return the target model if redirected, else the original."""
