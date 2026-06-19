@@ -14,7 +14,7 @@ REDIS_KEY = k("api_keys")
 
 async def get_active_keys() -> set | None:
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.get(
                 f"{config.BACKEND_API_URL}/api-keys/admin/list",
                 headers={"x-admin-token": config.BACKEND_SECRET_TOKEN},
