@@ -1,6 +1,10 @@
+import glob
 import json
+import os
+import ssl
 from http import HTTPStatus
 
+import certifi
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response, Cookie
 from fastapi.responses import StreamingResponse
@@ -28,7 +32,18 @@ limits = httpx.Limits(
     max_connections=500,  # Max total concurrent connections
     max_keepalive_connections=100,  # Max idle connections to keep alive
 )
-client = httpx.AsyncClient(timeout=timeout, limits=limits)
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """Trust the public CAs plus any pinned self-signed upstream certs in ../certs/*.crt."""
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    certs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "certs")
+    for crt in sorted(glob.glob(os.path.join(certs_dir, "*.crt"))):
+        ctx.load_verify_locations(cafile=crt)
+    return ctx
+
+
+client = httpx.AsyncClient(timeout=timeout, limits=limits, verify=_build_ssl_context())
 
 
 async def close_http_client() -> None:
