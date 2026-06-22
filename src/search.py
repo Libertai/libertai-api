@@ -3,12 +3,13 @@ from fastapi import APIRouter, Request, Response
 
 from src.config import config
 from src.logger import setup_logger
+from src.ssl_trust import SSL_CONTEXT
 
 router = APIRouter(tags=["Search"])
 logger = setup_logger(__name__)
 
 timeout = httpx.Timeout(connect=3.0, read=30.0, write=10.0, pool=5.0)
-client = httpx.AsyncClient(timeout=timeout)
+client = httpx.AsyncClient(timeout=timeout, verify=SSL_CONTEXT)
 
 
 async def close_http_client() -> None:

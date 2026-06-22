@@ -6,6 +6,7 @@ from src.config import config
 from src.cryptography import create_signed_payload
 from src.logger import setup_logger
 from src.redis_client import get_redis, k
+from src.ssl_trust import SSL_CONTEXT
 
 logger = setup_logger(__name__)
 
@@ -14,7 +15,7 @@ REDIS_KEY = k("api_keys")
 
 async def get_active_keys() -> set | None:
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=120.0, verify=SSL_CONTEXT) as client:
             response = await client.get(
                 f"{config.BACKEND_API_URL}/api-keys/admin/list",
                 headers={"x-admin-token": config.BACKEND_SECRET_TOKEN},
@@ -84,7 +85,7 @@ async def distribute_keys_to_clients():
         signed_payload = create_signed_payload({"keys": keys_list}, config.PRIVATE_KEY)
         payload = {"encrypted_payload": signed_payload}
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=SSL_CONTEXT) as client:
             for endpoint in client_endpoints:
                 try:
                     response = await client.post(endpoint, json=payload)
