@@ -7,6 +7,7 @@ import httpx
 from src.config import config
 from src.logger import setup_logger
 from src.redis_client import get_redis, k
+from src.ssl_trust import SSL_CONTEXT
 
 logger = setup_logger(__name__)
 
@@ -110,7 +111,7 @@ class ServerHealthMonitor:
                 # Hardcoded healthcheck for Hermes which is in an isolated TEE with an old version
                 return ServerMetrics(is_healthy=True, is_loaded=True)
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, verify=SSL_CONTEXT) as client:
                 response = await client.get(health_url)
                 if response.status_code == HTTPStatus.OK:
                     return ServerMetrics(is_healthy=True, is_loaded=True)
