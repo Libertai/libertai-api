@@ -252,7 +252,7 @@ async def proxy_request(
             response_headers = dict(response.headers)
             response_headers["set-cookie"] = cookie_header
 
-            is_streaming_response = response.headers.get("content-type", "") == "text/event-stream"
+            is_streaming_response = "text/event-stream" in response.headers.get("content-type", "")
 
             if is_streaming_response:
 
