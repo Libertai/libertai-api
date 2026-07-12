@@ -1,4 +1,6 @@
 import json
+import time
+import uuid
 from http import HTTPStatus
 
 import httpx
@@ -10,7 +12,12 @@ from pydantic import BaseModel
 from src.config import config
 from src.health import server_health_monitor
 from src.image_stripping import IMAGE_STRIP_PATHS, strip_images
-from src.load_tracker import adjust as load_adjust, get_all_loads
+from src.load_tracker import (
+    LEASE_REFRESH_INTERVAL,
+    acquire as load_acquire,
+    release as load_release,
+    get_all_loads,
+)
 from src.logger import setup_logger
 from src.aleph import aleph_service
 from src.ssl_trust import SSL_CONTEXT
@@ -175,10 +182,7 @@ async def proxy_request(
             detail=f"No server configured for model {model_name}",
         )
 
-    # Capture weight for inflight tracking (must be same value for increment and decrement)
-    body_weight = len(body)
-
-    # Snapshot inflight loads from Redis once for sorting
+    # Snapshot inflight request counts from Redis once for sorting
     loads = await get_all_loads()
 
     # Tiered ordering: healthy > capable > unknown. Sort BY LOAD within each tier, not
@@ -220,19 +224,20 @@ async def proxy_request(
     for attempt, server in enumerate(servers_to_try, 1):
         url = f"{server}/{full_path}"
 
-        incremented = False
+        # Release is best-effort (cancelled cleanup, uncancelled non-streaming
+        # disconnects, killed process) — the lease deadline is the real leak guard.
+        request_id = uuid.uuid4().hex
+        owned = False
         try:
             logger.debug(f"Attempt {attempt}/{len(servers_to_try)}: Forwarding to {url}")
             req = client.build_request("POST", url, content=body, headers=headers, params=request.query_params)
-            await load_adjust(server, body_weight)
-            incremented = True
+            await load_acquire(server, request_id)
+            owned = True
             response = await client.send(req, stream=True)
 
             # Retry on server errors (5xx) — upstream is broken, try next server
             if response.status_code >= 500:
                 await response.aclose()
-                await load_adjust(server, -body_weight)
-                incremented = False
                 logger.warning(
                     f"Server error {response.status_code} from {url} (attempt {attempt}/{len(servers_to_try)})"
                 )
@@ -256,16 +261,23 @@ async def proxy_request(
 
             if is_streaming_response:
 
-                async def generate_chunks(_server=server, _weight=body_weight):
+                async def generate_chunks(_server=server, _rid=request_id):
+                    last_refresh = time.monotonic()
                     try:
                         # aiter_raw (not aiter_bytes) so we forward the body exactly as the
                         # upstream encoded it, matching the Content-Encoding header we pass on.
                         async for chunk in response.aiter_raw():
+                            now = time.monotonic()
+                            # Refresh the lease so streams outlasting LEASE_TTL stay counted.
+                            if now - last_refresh >= LEASE_REFRESH_INTERVAL:
+                                await load_acquire(_server, _rid)
+                                last_refresh = now
                             yield chunk
                     finally:
                         await response.aclose()
-                        await load_adjust(_server, -_weight)
+                        await load_release(_server, _rid)
 
+                owned = False  # generator's finally now owns the release
                 return StreamingResponse(
                     content=generate_chunks(),
                     status_code=response.status_code,
@@ -276,8 +288,6 @@ async def proxy_request(
                 # Raw bytes, still encoded — kept consistent with the Content-Encoding header.
                 response_bytes = b"".join([chunk async for chunk in response.aiter_raw()])
                 await response.aclose()
-                await load_adjust(server, -body_weight)
-
                 return Response(
                     content=response_bytes,
                     status_code=response.status_code,
@@ -286,8 +296,6 @@ async def proxy_request(
                 )
 
         except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException) as e:
-            if incremented:
-                await load_adjust(server, -body_weight)
             # Connection error - try next server
             logger.warning(
                 f"Connection failed to {url} (attempt {attempt}/{len(servers_to_try)}): {type(e).__name__}: {e}"
@@ -296,11 +304,13 @@ async def proxy_request(
             continue
 
         except Exception as e:
-            if incremented:
-                await load_adjust(server, -body_weight)
             # Other errors - log and fail immediately
             logger.error(f"Error forwarding request to {url}: {type(e).__name__}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Error forwarding request: {type(e).__name__}: {str(e)}")
+
+        finally:
+            if owned:
+                await load_release(server, request_id)
 
     # All servers failed
     logger.error(
