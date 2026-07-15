@@ -91,6 +91,9 @@ async def distribute_keys_to_clients():
                     response = await client.post(endpoint, json=payload)
                     if response.status_code != 200:
                         logger.error(f"Error sending keys to {endpoint}: {response.status_code} - {response.text}")
+                except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException, httpx.ProxyError) as e:
+                    # Transient: upstream box slow/unreachable — other endpoints still get their keys
+                    logger.warning(f"Could not send keys to {endpoint}: {type(e).__name__}: {e}")
                 except Exception as e:
                     logger.error(f"Exception sending keys to {endpoint}: {e}", exc_info=True)
 
