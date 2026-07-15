@@ -295,8 +295,8 @@ async def proxy_request(
                     media_type=response.headers.get("Content-Type", ""),
                 )
 
-        except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException) as e:
-            # Connection error - try next server
+        except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException, httpx.ProxyError) as e:
+            # Connection error (incl. upstream HTTP-proxy failures) - try next server
             logger.warning(
                 f"Connection failed to {url} (attempt {attempt}/{len(servers_to_try)}): {type(e).__name__}: {e}"
             )
