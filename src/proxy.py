@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 import uuid
@@ -261,7 +262,7 @@ async def proxy_request(
 
             if is_streaming_response:
 
-                async def generate_chunks(_server=server, _rid=request_id):
+                async def generate_chunks(_server=server, _rid=request_id, _url=url):
                     last_refresh = time.monotonic()
                     try:
                         # aiter_raw (not aiter_bytes) so we forward the body exactly as the
@@ -273,6 +274,11 @@ async def proxy_request(
                                 await load_acquire(_server, _rid)
                                 last_refresh = now
                             yield chunk
+                    except asyncio.CancelledError:
+                        raise  # client disconnect — normal
+                    except Exception as e:
+                        # Headers already sent; end the stream instead of raising into ASGI.
+                        logger.warning(f"Stream from {_url} interrupted: {type(e).__name__}: {e}")
                     finally:
                         await response.aclose()
                         await load_release(_server, _rid)

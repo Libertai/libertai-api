@@ -5,6 +5,14 @@ from typing import Optional
 from src.config import config
 
 
+class _LevelPrefixFormatter(logging.Formatter):
+    # Repeat the level/name prefix on every line so per-line log classifiers (dokploy)
+    # tag whole tracebacks, not just their first line.
+    def format(self, record: logging.LogRecord) -> str:
+        s = super().format(record)
+        return s.replace("\n", f"\n{record.asctime} - {record.levelname} - {record.name} - ")
+
+
 def setup_logger(name: str, level: Optional[int] = None) -> logging.Logger:
     """
     Set up and configure a logger
@@ -22,7 +30,7 @@ def setup_logger(name: str, level: Optional[int] = None) -> logging.Logger:
 
     if not logger.handlers:
         stream_handler = logging.StreamHandler(sys.stdout)
-        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+        formatter = _LevelPrefixFormatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
         stream_handler.setFormatter(formatter)
         logger.addHandler(stream_handler)
 
