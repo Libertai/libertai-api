@@ -10,10 +10,14 @@ from src.ssl_trust import SSL_CONTEXT
 
 logger = setup_logger(__name__)
 
+# Legacy list-shaped snapshot; still written so pre-invalid-map replicas can read it
+# during a rolling deploy. Drop once the fleet only runs dict-shape-aware code.
 REDIS_KEY = k("api_keys")
+# Dict shape: {"keys": [...], "invalid_keys": {key: {"reason", "message"}}}
+REDIS_KEY_V2 = k("api_keys_v2")
 
 
-async def get_active_keys() -> set | None:
+async def get_active_keys() -> tuple[set, dict] | None:
     try:
         async with httpx.AsyncClient(timeout=120.0, verify=SSL_CONTEXT) as client:
             response = await client.get(
@@ -22,7 +26,7 @@ async def get_active_keys() -> set | None:
             )
             if response.status_code == 200:
                 data = response.json()
-                return set(data.get("keys") or [])
+                return set(data.get("keys") or []), dict(data.get("invalid_keys") or {})
             logger.error(f"Error fetching accounts: {response.status_code}")
             return None
     except Exception as e:
@@ -30,9 +34,19 @@ async def get_active_keys() -> set | None:
         return None
 
 
+def parse_snapshot(raw: str) -> tuple[set[str], dict[str, dict]]:
+    """Accepts both snapshot shapes: legacy JSON list and v2 dict."""
+    data = json.loads(raw)
+    if isinstance(data, dict):
+        return set(data.get("keys") or []), dict(data.get("invalid_keys") or {})
+    return set(data), {}
+
+
 class KeysManager:
     _instance = None
     keys: set[str] = set()
+    # key -> {"reason": str, "message": str} for real-but-unusable keys (limits/credits/disabled)
+    invalid_keys: dict[str, dict] = {}
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -42,13 +56,23 @@ class KeysManager:
     def key_exists(self, key):
         return key in self.keys
 
+    def key_invalid_info(self, key: str) -> dict | None:
+        return self.invalid_keys.get(key)
+
     async def refresh_keys(self):
         """Leader-only: fetch authoritative keys and publish to Redis."""
-        new_keys = await get_active_keys()
-        if new_keys is not None:
+        fetched = await get_active_keys()
+        if fetched is not None:
+            new_keys, new_invalid = fetched
             self.keys = new_keys
+            self.invalid_keys = new_invalid
             try:
-                await get_redis().set(REDIS_KEY, json.dumps(sorted(new_keys)))
+                redis = get_redis()
+                await redis.set(REDIS_KEY, json.dumps(sorted(new_keys)))
+                await redis.set(
+                    REDIS_KEY_V2,
+                    json.dumps({"keys": sorted(new_keys), "invalid_keys": new_invalid}),
+                )
             except Exception as e:
                 logger.error(f"Failed to publish keys to Redis: {e}", exc_info=True)
         # Also distribute keys to client servers
@@ -61,10 +85,12 @@ class KeysManager:
         An empty list means "authoritatively empty" → clear local cache.
         """
         try:
-            raw = await get_redis().get(REDIS_KEY)
+            raw = await get_redis().get(REDIS_KEY_V2)
+            if raw is None:
+                raw = await get_redis().get(REDIS_KEY)
             if raw is None:
                 return
-            self.keys = set(json.loads(raw))
+            self.keys, self.invalid_keys = parse_snapshot(raw)
         except Exception as e:
             logger.error(f"Failed to sync keys from Redis: {e}", exc_info=True)
 
@@ -82,7 +108,10 @@ async def distribute_keys_to_clients():
     keys_list = list(keys_manager.keys)
 
     try:
-        signed_payload = create_signed_payload({"keys": keys_list}, config.PRIVATE_KEY)
+        # Old boxes read only "keys" from the decrypted payload; extra fields are ignored.
+        signed_payload = create_signed_payload(
+            {"keys": keys_list, "invalid_keys": keys_manager.invalid_keys}, config.PRIVATE_KEY
+        )
         payload = {"encrypted_payload": signed_payload}
 
         async with httpx.AsyncClient(timeout=30.0, verify=SSL_CONTEXT) as client:
