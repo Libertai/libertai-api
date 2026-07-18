@@ -30,6 +30,14 @@ def test_valid_key_ok():
     assert resp.status_code == 200
 
 
+def test_key_in_both_sets_treated_as_valid():
+    # Defensive overlap case: valid set wins (lists are disjoint by construction).
+    KeysManager().keys = {"both"}
+    KeysManager().invalid_keys = {"both": {"reason": "no_credits", "message": "No credits."}}
+    resp = _client().get("/libertai/auth/check", headers={"Authorization": "Bearer both"})
+    assert resp.status_code == 200
+
+
 def test_blocked_key_403_with_reason():
     KeysManager().keys = set()
     KeysManager().invalid_keys = {"blocked": {"reason": "no_credits", "message": "No credits."}}
