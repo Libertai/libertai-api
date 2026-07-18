@@ -68,11 +68,13 @@ class KeysManager:
             self.invalid_keys = new_invalid
             try:
                 redis = get_redis()
-                await redis.set(REDIS_KEY, json.dumps(sorted(new_keys)))
-                await redis.set(
-                    REDIS_KEY_V2,
-                    json.dumps({"keys": sorted(new_keys), "invalid_keys": new_invalid}),
-                )
+                async with redis.pipeline(transaction=True) as pipe:
+                    pipe.set(REDIS_KEY, json.dumps(sorted(new_keys)))
+                    pipe.set(
+                        REDIS_KEY_V2,
+                        json.dumps({"keys": sorted(new_keys), "invalid_keys": new_invalid}),
+                    )
+                    await pipe.execute()
             except Exception as e:
                 logger.error(f"Failed to publish keys to Redis: {e}", exc_info=True)
         # Also distribute keys to client servers

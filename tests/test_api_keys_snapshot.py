@@ -1,6 +1,19 @@
 import json
 
+import pytest
+
 from src.api_keys import KeysManager, parse_snapshot
+
+
+@pytest.fixture(autouse=True)
+def _reset_keys_manager():
+    """Snapshot and restore KeysManager singleton state around each test."""
+    manager = KeysManager()
+    saved_keys = manager.keys.copy()
+    saved_invalid = manager.invalid_keys.copy()
+    yield
+    manager.keys = saved_keys
+    manager.invalid_keys = saved_invalid
 
 
 def test_parse_new_dict_shape():
