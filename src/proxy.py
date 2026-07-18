@@ -23,9 +23,18 @@ from src.logger import setup_logger
 from src.aleph import aleph_service
 from src.ssl_trust import SSL_CONTEXT
 from src.x402 import x402_manager
+from src.api_keys import KeysManager
+from src.errors import invalid_key_response
 
 router = APIRouter(tags=["Proxy"])
 security = HTTPBearer()
+
+keys_manager = KeysManager()
+
+
+def bearer_token(auth_header: str) -> str:
+    return auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else auth_header.strip()
+
 
 timeout = httpx.Timeout(
     connect=3.0,  # Connection timeout (fast failover)
@@ -137,6 +146,13 @@ async def proxy_request(
 
     # Conditional auth: if no Authorization header, use x402 payment flow
     has_auth = request.headers.get("authorization")
+    if has_auth:
+        # Known-but-blocked key: answer with the reason instead of forwarding
+        # to a box that would return a generic 401. Unknown keys still fall
+        # through to the box check (avoids api/box sync-skew 401s here).
+        invalid_info = keys_manager.key_invalid_info(bearer_token(has_auth))
+        if invalid_info is not None:
+            return invalid_key_response(invalid_info)
     if not has_auth:
         try:
             body_json = json.loads(body)
