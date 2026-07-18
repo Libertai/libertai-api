@@ -107,10 +107,6 @@ class ServerHealthMonitor:
         """
         try:
             health_url = f"{url}/health/{model}"
-            if model == "hermes-3-8b-tee":
-                # Hardcoded healthcheck for Hermes which is in an isolated TEE with an old version
-                return ServerMetrics(is_healthy=True, is_loaded=True)
-
             async with httpx.AsyncClient(timeout=30.0, verify=SSL_CONTEXT) as client:
                 response = await client.get(health_url)
                 if response.status_code == HTTPStatus.OK:
