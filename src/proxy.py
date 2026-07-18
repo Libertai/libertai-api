@@ -113,9 +113,7 @@ async def proxy_request(
     should_strip_images = full_path in IMAGE_STRIP_PATHS and not aleph_service.is_vision_model(model)
 
     # Update request body if model changed, needs thinking kwargs, or needs image stripping
-    needs_body_update = (
-        (model != model_name.lower()) or aleph_service.is_reasoning_model(model) or should_strip_images
-    )
+    needs_body_update = (model != model_name.lower()) or aleph_service.is_reasoning_model(model) or should_strip_images
     if needs_body_update:
         try:
             body_json = json.loads(body)
@@ -150,9 +148,13 @@ async def proxy_request(
         # Known-but-blocked key: answer with the reason instead of forwarding
         # to a box that would return a generic 401. Unknown keys still fall
         # through to the box check (avoids api/box sync-skew 401s here).
-        invalid_info = keys_manager.key_invalid_info(bearer_token(has_auth))
-        if invalid_info is not None:
-            return invalid_key_response(invalid_info)
+        # Valid set wins over the invalid map (lists are disjoint by
+        # construction; matches auth/check and the box-side check).
+        token = bearer_token(has_auth)
+        if not keys_manager.key_exists(token):
+            invalid_info = keys_manager.key_invalid_info(token)
+            if invalid_info is not None:
+                return invalid_key_response(invalid_info)
     if not has_auth:
         try:
             body_json = json.loads(body)
