@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -55,3 +56,36 @@ def test_blocked_key_gets_403_before_any_upstream_call(monkeypatch):
             "code": "no_credits",
         }
     }
+
+
+def test_valid_key_passes_the_gate(monkeypatch):
+    # A key in the valid set (and not in the invalid map) must fall through the
+    # gate to the forwarding loop. Upstream is stubbed to refuse connections, so
+    # reaching the all-servers-failed 503 proves the gate didn't over-block.
+    monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
+    monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
+
+    async def _no_loads():
+        return {}
+
+    async def _noop(*args, **kwargs):
+        return None
+
+    async def _refuse(*args, **kwargs):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(proxy, "get_all_loads", _no_loads)
+    monkeypatch.setattr(proxy, "load_acquire", _noop)
+    monkeypatch.setattr(proxy, "load_release", _noop)
+    monkeypatch.setattr(proxy.client, "send", _refuse)
+
+    KeysManager().keys = {"good"}
+    KeysManager().invalid_keys = {}
+
+    resp = _client().post(
+        "/v1/chat/completions",
+        json={"model": "m"},
+        headers={"Authorization": "Bearer good"},
+    )
+
+    assert resp.status_code == 503

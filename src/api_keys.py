@@ -26,6 +26,8 @@ async def get_active_keys() -> tuple[set, dict] | None:
             )
             if response.status_code == 200:
                 data = response.json()
+                # invalid_keys entries ({reason, message}) are trusted server-side data,
+                # stored/served as-is; consumers read them with .get() fallbacks.
                 return set(data.get("keys") or []), dict(data.get("invalid_keys") or {})
             logger.error(f"Error fetching accounts: {response.status_code}")
             return None
