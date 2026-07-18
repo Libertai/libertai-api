@@ -10,10 +10,10 @@ from src.ssl_trust import SSL_CONTEXT
 
 logger = setup_logger(__name__)
 
-# Legacy list-shaped snapshot; still written so pre-invalid-map replicas can read it
-# during a rolling deploy. Drop once the fleet only runs dict-shape-aware code.
+# Snapshot shape: {"keys": [...], "invalid_keys": {key: {"reason", "message"}}}
 REDIS_KEY = k("api_keys")
-# Dict shape: {"keys": [...], "invalid_keys": {key: {"reason", "message"}}}
+# Transitional key from the list→dict shape migration; deleted on each refresh so no
+# stale copy lingers. Constant + delete can go once no deployment has ever written it.
 REDIS_KEY_V2 = k("api_keys_v2")
 
 
@@ -37,7 +37,8 @@ async def get_active_keys() -> tuple[set, dict] | None:
 
 
 def parse_snapshot(raw: str) -> tuple[set[str], dict[str, dict]]:
-    """Accepts both snapshot shapes: legacy JSON list and v2 dict."""
+    """Accepts both snapshot shapes: dict, plus the legacy JSON list a
+    previous-release leader may still write during a rolling deploy."""
     data = json.loads(raw)
     if isinstance(data, dict):
         return set(data.get("keys") or []), dict(data.get("invalid_keys") or {})
@@ -71,11 +72,11 @@ class KeysManager:
             try:
                 redis = get_redis()
                 async with redis.pipeline(transaction=True) as pipe:
-                    pipe.set(REDIS_KEY, json.dumps(sorted(new_keys)))
                     pipe.set(
-                        REDIS_KEY_V2,
+                        REDIS_KEY,
                         json.dumps({"keys": sorted(new_keys), "invalid_keys": new_invalid}),
                     )
+                    pipe.delete(REDIS_KEY_V2)
                     await pipe.execute()
             except Exception as e:
                 logger.error(f"Failed to publish keys to Redis: {e}", exc_info=True)
@@ -89,9 +90,7 @@ class KeysManager:
         An empty list means "authoritatively empty" → clear local cache.
         """
         try:
-            raw = await get_redis().get(REDIS_KEY_V2)
-            if raw is None:
-                raw = await get_redis().get(REDIS_KEY)
+            raw = await get_redis().get(REDIS_KEY)
             if raw is None:
                 return
             self.keys, self.invalid_keys = parse_snapshot(raw)
