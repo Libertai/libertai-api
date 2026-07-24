@@ -29,7 +29,7 @@ async def openai_models_list():
     current_timestamp = int(time.time())
 
     models_data = []
-    for model_name in config.MODELS.keys():
+    for model_name in config.MODELS:
         model_entry = {"id": model_name, "object": "model", "created": current_timestamp, "owned_by": "libertai"}
         models_data.append(model_entry)
         if aleph_service.is_reasoning_model(model_name):

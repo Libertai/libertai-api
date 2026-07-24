@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+from typing import ClassVar
 
 import httpx
 import tiktoken  # type: ignore[import-not-found]
@@ -23,7 +24,7 @@ _enc = tiktoken.get_encoding("cl100k_base")
 
 class X402Manager:
     _instance = None
-    prices: dict[str, dict] = {}
+    prices: ClassVar[dict[str, dict]] = {}
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:

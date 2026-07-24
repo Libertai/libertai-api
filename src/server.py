@@ -13,17 +13,19 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
+from src.aleph import aleph_service
+from src.aleph_credits import router as aleph_credits_router
 from src.api_keys import KeysManager
 from src.auth import router as auth_router
 from src.health import server_health_monitor
 from src.leader import leader
 from src.logger import setup_logger
 from src.model import router as model_router
-from src.aleph_credits import router as aleph_credits_router
-from src.proxy import router as proxy_router, close_http_client
+from src.proxy import close_http_client
+from src.proxy import router as proxy_router
 from src.redis_client import close_redis
-from src.search import router as search_router, close_http_client as close_search_http_client
-from src.aleph import aleph_service
+from src.search import close_http_client as close_search_http_client
+from src.search import router as search_router
 from src.x402 import x402_manager
 
 # The Telegram bot now runs as its own dokploy service (replicas: 1, entrypoint

@@ -92,7 +92,7 @@ async def purchase_aleph_credits(request: Request, body: AlephCreditsRequest):
 
     try:
         async with AuthenticatedAlephHttpClient(account=_aleph_account) as client:
-            message, status = await client.create_post(
+            message, _status = await client.create_post(
                 post_content={
                     "transfer": {
                         "credits": [

@@ -1,4 +1,5 @@
 import json
+from typing import ClassVar
 
 import httpx
 
@@ -32,7 +33,7 @@ async def get_active_keys() -> tuple[set, dict] | None:
             logger.error(f"Error fetching accounts: {response.status_code}")
             return None
     except Exception as e:
-        logger.error(f"Exception fetching accounts {str(e)}", exc_info=True)
+        logger.error(f"Exception fetching accounts {e!s}", exc_info=True)
         return None
 
 
@@ -47,13 +48,13 @@ def parse_snapshot(raw: str) -> tuple[set[str], dict[str, dict]]:
 
 class KeysManager:
     _instance = None
-    keys: set[str] = set()
+    keys: ClassVar[set[str]] = set()
     # key -> {"reason": str, "message": str} for real-but-unusable keys (limits/credits/disabled)
-    invalid_keys: dict[str, dict] = {}
+    invalid_keys: ClassVar[dict[str, dict]] = {}
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
-            cls._instance = super(KeysManager, cls).__new__(cls, *args, **kwargs)
+            cls._instance = super().__new__(cls, *args, **kwargs)
         return cls._instance
 
     def key_exists(self, key):

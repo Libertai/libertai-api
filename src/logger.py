@@ -1,6 +1,5 @@
 import logging
 import sys
-from typing import Optional
 
 from src.config import config
 
@@ -13,7 +12,7 @@ class _LevelPrefixFormatter(logging.Formatter):
         return s.replace("\n", f"\n{record.asctime} - {record.levelname} - {record.name} - ")
 
 
-def setup_logger(name: str, level: Optional[int] = None) -> logging.Logger:
+def setup_logger(name: str, level: int | None = None) -> logging.Logger:
     """
     Set up and configure a logger
 

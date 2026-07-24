@@ -1,7 +1,7 @@
 import asyncio
 import socket
 import uuid
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from src.logger import setup_logger
 from src.redis_client import get_redis, k
@@ -76,7 +76,7 @@ class LeaderElection:
 
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=RENEW_INTERVAL)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     async def shutdown(self) -> None:

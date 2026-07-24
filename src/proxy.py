@@ -5,26 +5,30 @@ import uuid
 from http import HTTPStatus
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response, Cookie
+from fastapi import APIRouter, Cookie, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 
+from src.aleph import aleph_service
+from src.api_keys import KeysManager
 from src.config import config
+from src.errors import invalid_key_response
 from src.health import server_health_monitor
 from src.image_stripping import IMAGE_STRIP_PATHS, strip_images
 from src.load_tracker import (
     LEASE_REFRESH_INTERVAL,
-    acquire as load_acquire,
-    release as load_release,
     get_all_loads,
 )
+from src.load_tracker import (
+    acquire as load_acquire,
+)
+from src.load_tracker import (
+    release as load_release,
+)
 from src.logger import setup_logger
-from src.aleph import aleph_service
 from src.ssl_trust import SSL_CONTEXT
 from src.x402 import x402_manager
-from src.api_keys import KeysManager
-from src.errors import invalid_key_response
 
 router = APIRouter(tags=["Proxy"])
 security = HTTPBearer()
@@ -224,13 +228,15 @@ async def proxy_request(
             seen.add(s)
             servers_to_try.append(s)
 
-    # Cookie stickiness (KV cache locality) — promote to front only if currently in the pool.
-    # If the cookie points to a known-bad server, ignore it.
-    if preferred_server and preferred_server in servers_to_try:
-        if preferred_server in healthy_set or preferred_server in capable_set:
-            servers_to_try.remove(preferred_server)
-            servers_to_try.insert(0, preferred_server)
-        # else: cookie server is unknown/bad — let tier ordering pick first
+    # Cookie stickiness (KV cache locality) — promote to front only if currently in the pool
+    # and not a known-bad server; otherwise ignore the cookie and let tier ordering pick first.
+    if (
+        preferred_server
+        and preferred_server in servers_to_try
+        and (preferred_server in healthy_set or preferred_server in capable_set)
+    ):
+        servers_to_try.remove(preferred_server)
+        servers_to_try.insert(0, preferred_server)
 
     logger.debug(
         f"Load balancing for {model}: servers_to_try={[f'{s}(load={loads.get(s, 0)})' for s in servers_to_try]}, "
@@ -280,12 +286,12 @@ async def proxy_request(
 
             if is_streaming_response:
 
-                async def generate_chunks(_server=server, _rid=request_id, _url=url):
+                async def generate_chunks(_server=server, _rid=request_id, _url=url, _response=response):
                     last_refresh = time.monotonic()
                     try:
                         # aiter_raw (not aiter_bytes) so we forward the body exactly as the
                         # upstream encoded it, matching the Content-Encoding header we pass on.
-                        async for chunk in response.aiter_raw():
+                        async for chunk in _response.aiter_raw():
                             now = time.monotonic()
                             # Refresh the lease so streams outlasting LEASE_TTL stay counted.
                             if now - last_refresh >= LEASE_REFRESH_INTERVAL:
@@ -298,7 +304,7 @@ async def proxy_request(
                         # Headers already sent; end the stream instead of raising into ASGI.
                         logger.warning(f"Stream from {_url} interrupted: {type(e).__name__}: {e}")
                     finally:
-                        await response.aclose()
+                        await _response.aclose()
                         await load_release(_server, _rid)
 
                 owned = False  # generator's finally now owns the release
@@ -330,7 +336,7 @@ async def proxy_request(
         except Exception as e:
             # Other errors - log and fail immediately
             logger.error(f"Error forwarding request to {url}: {type(e).__name__}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Error forwarding request: {type(e).__name__}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error forwarding request: {type(e).__name__}: {e!s}")
 
         finally:
             if owned:

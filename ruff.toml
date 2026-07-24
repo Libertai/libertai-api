@@ -1,2 +1,7 @@
-# Set the maximum line length to 79.
 line-length = 119
+
+[lint]
+ignore = [
+    "BLE001", # route/stream/script boundaries deliberately catch broad Exception and log
+    "G201",   # logger.error(..., exc_info=True) is the repo's standard error-logging pattern
+]

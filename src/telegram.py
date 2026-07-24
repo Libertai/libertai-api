@@ -3,10 +3,9 @@
 Lifecycle (Application building, polling, alerts loop) lives in src/bot.py.
 The web `api` replicas no longer import this module; only the bot worker does."""
 
-from datetime import datetime
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
-from telegram import Bot, Update
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, NetworkError
 from telegram.ext import ContextTypes
@@ -14,6 +13,7 @@ from telegram.ext import ContextTypes
 from src.config import config
 from src.health import server_health_monitor
 from src.logger import setup_logger
+from telegram import Bot, Update
 
 logger = setup_logger(__name__)
 
@@ -70,7 +70,7 @@ def generate_health_report() -> str:
         total_down += len(down)
         total_urls += len(urls)
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
     if total_down == 0 and total_urls > 0:
         message = f"✅ *LibertAI Health Report* ({now})\n\n*All servers are UP*\n\n"
     else:
@@ -169,7 +169,7 @@ async def send_health_report(bot: Bot) -> None:
         if total_down == 0 or total_urls == 0:
             return
 
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         message = f"🚨 *LibertAI Health Alert* ({now})\n\n*{total_down} of {total_urls} servers are DOWN*\n\n"
         for model, down_urls in down_by_model.items():
             all_urls = server_health_monitor.model_urls[model]

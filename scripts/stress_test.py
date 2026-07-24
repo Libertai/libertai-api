@@ -29,7 +29,6 @@ from dataclasses import dataclass, field
 
 import httpx
 
-
 PROMPTS = [
     "Say hi in one word.",
     "Reply with a single number between 1 and 10.",
@@ -194,7 +193,7 @@ async def ticker(stats: Stats, stop: asyncio.Event, interval: float) -> None:
     while not stop.is_set():
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         total = stats.total
         success = stats.success
@@ -251,7 +250,7 @@ async def main() -> None:
         async def stopper():
             try:
                 await asyncio.wait_for(stop.wait(), timeout=args.duration)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 stop.set()
 
         workers = [

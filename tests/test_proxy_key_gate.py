@@ -3,7 +3,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import src.proxy as proxy
+from src import proxy
 from src.api_keys import KeysManager
 from src.proxy import bearer_token
 

@@ -1,5 +1,6 @@
 import time
-from typing import Awaitable, cast
+from collections.abc import Awaitable
+from typing import cast
 
 from src.config import config
 from src.logger import setup_logger

@@ -30,9 +30,7 @@ def _is_image_part(item) -> bool:
     if part_type in ("image_url", "input_image"):
         return True
     # Anthropic image block; guard on `source` to avoid matching unrelated "image" types.
-    if part_type == "image" and "source" in item:
-        return True
-    return False
+    return bool(part_type == "image" and "source" in item)
 
 
 def _strip(obj):
