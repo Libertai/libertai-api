@@ -1,5 +1,6 @@
 import asyncio
 import json
+import random
 import time
 import uuid
 from http import HTTPStatus
@@ -216,7 +217,10 @@ async def proxy_request(
     unknown_servers = [s for s in all_servers if s not in healthy_set and s not in capable_set]
 
     def by_load(urls: list[str]) -> list[str]:
-        return sorted(urls, key=lambda s: loads.get(s, 0))
+        # Shuffle first: sorted() is stable, so equal-load servers would otherwise always
+        # come out in models.json order. Loads tie at 0 whenever traffic doesn't overlap,
+        # which pins all baseline traffic to the first configured server.
+        return sorted(random.sample(urls, len(urls)), key=lambda s: loads.get(s, 0))
 
     tiered = [*by_load(healthy_servers), *by_load(capable_servers), *by_load(unknown_servers)]
 
@@ -275,7 +279,7 @@ async def proxy_request(
 
             # Build the Set-Cookie header string manually
             cookie_header = (
-                f"preferred_instances={updated_cookie_value}; Max-Age=1800; Path=/; HttpOnly; Secure; SameSite=Lax"
+                f"preferred_instances={updated_cookie_value}; Max-Age=600; Path=/; HttpOnly; Secure; SameSite=Lax"
             )
 
             # Copy original headers and add the Set-Cookie header
