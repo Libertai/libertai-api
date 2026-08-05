@@ -13,6 +13,15 @@ logger = setup_logger(__name__)
 
 REDIS_KEY = k("health", "snapshot")
 
+# Backends sit behind a forward proxy, so a new connection costs a CONNECT round-trip.
+# keepalive_expiry must exceed the check interval (httpx defaults to 5s) to reuse tunnels.
+limits = httpx.Limits(max_connections=64, max_keepalive_connections=32, keepalive_expiry=300.0)
+client = httpx.AsyncClient(timeout=30.0, verify=SSL_CONTEXT, limits=limits)
+
+
+async def close_http_client() -> None:
+    await client.aclose()
+
 
 class ServerMetrics:
     """Represents metrics for a server."""
@@ -107,15 +116,14 @@ class ServerHealthMonitor:
         """
         try:
             health_url = f"{url}/health/{model}"
-            async with httpx.AsyncClient(timeout=30.0, verify=SSL_CONTEXT) as client:
-                response = await client.get(health_url)
-                if response.status_code == HTTPStatus.OK:
-                    return ServerMetrics(is_healthy=True, is_loaded=True)
-                elif response.status_code == HTTPStatus.ACCEPTED:
-                    return ServerMetrics(is_healthy=True, is_loaded=False)
-                else:
-                    logger.warning(f"Health status error for {url}: {response.status_code}")
-                    return ServerMetrics(is_healthy=False, is_loaded=False)
+            response = await client.get(health_url)
+            if response.status_code == HTTPStatus.OK:
+                return ServerMetrics(is_healthy=True, is_loaded=True)
+            elif response.status_code == HTTPStatus.ACCEPTED:
+                return ServerMetrics(is_healthy=True, is_loaded=False)
+            else:
+                logger.warning(f"Health status error for {url}: {response.status_code}")
+                return ServerMetrics(is_healthy=False, is_loaded=False)
         except (httpx.HTTPError, ValueError) as e:
             logger.warning(f"Health check error for {url}: {type(e).__name__}: {e or 'No error message'}")
             return ServerMetrics(is_healthy=False, is_loaded=False)

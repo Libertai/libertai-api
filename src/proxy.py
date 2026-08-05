@@ -50,6 +50,9 @@ timeout = httpx.Timeout(
 limits = httpx.Limits(
     max_connections=500,  # Max total concurrent connections
     max_keepalive_connections=100,  # Max idle connections to keep alive
+    # Backends are behind a forward proxy: a new connection costs a CONNECT bounded by the read
+    # timeout above, not connect. Idle tunnels are reused rather than re-established every 5s.
+    keepalive_expiry=120.0,
 )
 client = httpx.AsyncClient(timeout=timeout, limits=limits, verify=SSL_CONTEXT)
 

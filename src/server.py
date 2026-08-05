@@ -16,7 +16,9 @@ from starlette.middleware.cors import CORSMiddleware
 from src.aleph import aleph_service
 from src.aleph_credits import router as aleph_credits_router
 from src.api_keys import KeysManager
+from src.api_keys import close_http_client as close_keys_http_client
 from src.auth import router as auth_router
+from src.health import close_http_client as close_health_http_client
 from src.health import server_health_monitor
 from src.leader import leader
 from src.logger import setup_logger
@@ -80,6 +82,8 @@ async def lifespan(_app: FastAPI):
         await asyncio.gather(leader_task, jobs_task, return_exceptions=True)
         await close_http_client()
         await close_search_http_client()
+        await close_health_http_client()
+        await close_keys_http_client()
         await close_redis()
 
 

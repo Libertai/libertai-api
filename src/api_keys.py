@@ -17,21 +17,29 @@ REDIS_KEY = k("api_keys")
 # stale copy lingers. Constant + delete can go once no deployment has ever written it.
 REDIS_KEY_V2 = k("api_keys_v2")
 
+# Boxes sit behind a forward proxy; keepalive_expiry must outlast the push interval to reuse tunnels.
+limits = httpx.Limits(max_connections=64, max_keepalive_connections=32, keepalive_expiry=300.0)
+client = httpx.AsyncClient(timeout=30.0, verify=SSL_CONTEXT, limits=limits)
+
+
+async def close_http_client() -> None:
+    await client.aclose()
+
 
 async def get_active_keys() -> tuple[set, dict] | None:
     try:
-        async with httpx.AsyncClient(timeout=120.0, verify=SSL_CONTEXT) as client:
-            response = await client.get(
-                f"{config.BACKEND_API_URL}/api-keys/admin/list",
-                headers={"x-admin-token": config.BACKEND_SECRET_TOKEN},
-            )
-            if response.status_code == 200:
-                data = response.json()
-                # invalid_keys entries ({reason, message}) are trusted server-side data,
-                # stored/served as-is; consumers read them with .get() fallbacks.
-                return set(data.get("keys") or []), dict(data.get("invalid_keys") or {})
-            logger.error(f"Error fetching accounts: {response.status_code}")
-            return None
+        response = await client.get(
+            f"{config.BACKEND_API_URL}/api-keys/admin/list",
+            headers={"x-admin-token": config.BACKEND_SECRET_TOKEN},
+            timeout=120.0,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            # invalid_keys entries ({reason, message}) are trusted server-side data,
+            # stored/served as-is; consumers read them with .get() fallbacks.
+            return set(data.get("keys") or []), dict(data.get("invalid_keys") or {})
+        logger.error(f"Error fetching accounts: {response.status_code}")
+        return None
     except Exception as e:
         logger.error(f"Exception fetching accounts {e!s}", exc_info=True)
         return None
@@ -118,17 +126,16 @@ async def distribute_keys_to_clients():
         )
         payload = {"encrypted_payload": signed_payload}
 
-        async with httpx.AsyncClient(timeout=30.0, verify=SSL_CONTEXT) as client:
-            for endpoint in client_endpoints:
-                try:
-                    response = await client.post(endpoint, json=payload)
-                    if response.status_code != 200:
-                        logger.error(f"Error sending keys to {endpoint}: {response.status_code} - {response.text}")
-                except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException, httpx.ProxyError) as e:
-                    # Transient: upstream box slow/unreachable — other endpoints still get their keys
-                    logger.warning(f"Could not send keys to {endpoint}: {type(e).__name__}: {e}")
-                except Exception as e:
-                    logger.error(f"Exception sending keys to {endpoint}: {e}", exc_info=True)
+        for endpoint in client_endpoints:
+            try:
+                response = await client.post(endpoint, json=payload)
+                if response.status_code != 200:
+                    logger.error(f"Error sending keys to {endpoint}: {response.status_code} - {response.text}")
+            except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException, httpx.ProxyError) as e:
+                # Transient: upstream box slow/unreachable — other endpoints still get their keys
+                logger.warning(f"Could not send keys to {endpoint}: {type(e).__name__}: {e}")
+            except Exception as e:
+                logger.error(f"Exception sending keys to {endpoint}: {e}", exc_info=True)
 
     except Exception as e:
         logger.error(f"Error creating signed payload: {e}", exc_info=True)
