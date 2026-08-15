@@ -8,11 +8,11 @@ from http import HTTPStatus
 import httpx
 from fastapi import APIRouter, Cookie, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 
 from src.aleph import aleph_service
 from src.api_keys import KeysManager
+from src.auth import extract_api_key
 from src.config import config
 from src.errors import invalid_key_response
 from src.health import server_health_monitor
@@ -32,13 +32,8 @@ from src.ssl_trust import SSL_CONTEXT
 from src.x402 import x402_manager
 
 router = APIRouter(tags=["Proxy"])
-security = HTTPBearer()
 
 keys_manager = KeysManager()
-
-
-def bearer_token(auth_header: str) -> str:
-    return auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else auth_header.strip()
 
 
 timeout = httpx.Timeout(
@@ -150,20 +145,22 @@ async def proxy_request(
     if "accept-encoding" not in headers:
         headers["accept-encoding"] = "identity"
 
-    # Conditional auth: if no Authorization header, use x402 payment flow
-    has_auth = request.headers.get("authorization")
-    if has_auth:
+    # Conditional auth: if no API key at all, use x402 payment flow
+    api_key = extract_api_key(request.headers)
+    if api_key:
         # Known-but-blocked key: answer with the reason instead of forwarding
         # to a box that would return a generic 401. Unknown keys still fall
         # through to the box check (avoids api/box sync-skew 401s here).
         # Valid set wins over the invalid map (lists are disjoint by
         # construction; matches auth/check and the box-side check).
-        token = bearer_token(has_auth)
-        if not keys_manager.key_exists(token):
-            invalid_info = keys_manager.key_invalid_info(token)
+        if not keys_manager.key_exists(api_key):
+            invalid_info = keys_manager.key_invalid_info(api_key)
             if invalid_info is not None:
                 return invalid_key_response(invalid_info)
-    if not has_auth:
+        # Boxes authenticate on Authorization, so an x-api-key-only client (any
+        # Anthropic SDK) needs its key moved onto that header before forwarding.
+        headers["authorization"] = f"Bearer {api_key}"
+    else:
         try:
             body_json = json.loads(body)
         except json.JSONDecodeError:

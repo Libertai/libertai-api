@@ -46,6 +46,18 @@ def test_blocked_key_403_with_reason():
     assert resp.json()["error"]["code"] == "no_credits"
 
 
+def test_x_api_key_accepted():
+    KeysManager().keys = {"good"}
+    KeysManager().invalid_keys = {}
+    resp = _client().get("/libertai/auth/check", headers={"x-api-key": "good"})
+    assert resp.status_code == 200
+
+
+def test_missing_credentials_401():
+    resp = _client().get("/libertai/auth/check")
+    assert resp.status_code == 401
+
+
 def test_unknown_key_401():
     KeysManager().keys = set()
     KeysManager().invalid_keys = {}
