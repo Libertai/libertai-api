@@ -29,6 +29,7 @@ from src.load_tracker import (
 )
 from src.logger import setup_logger
 from src.ssl_trust import SSL_CONTEXT
+from src.thinking import disable_thinking
 from src.x402 import x402_manager
 
 router = APIRouter(tags=["Proxy"])
@@ -123,7 +124,7 @@ async def proxy_request(
             body_json["model"] = model
             # Reasoning models: disable thinking by default, enable only with -thinking suffix
             if aleph_service.is_reasoning_model(model) and not thinking_requested:
-                body_json.setdefault("chat_template_kwargs", {}).setdefault("enable_thinking", False)
+                body_json = disable_thinking(model, body_json)
             # Non-vision models: drop any image parts so the upstream doesn't reject the request
             if should_strip_images:
                 body_json, stripped = strip_images(full_path, body_json)
