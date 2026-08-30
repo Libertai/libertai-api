@@ -1,9 +1,9 @@
 """Thinking-off directives for reasoning models, which disagree on the mechanism."""
 
-# These models' chat templates have no `enable_thinking`: sending it drops the opening `<think>`
-# tag while the model still reasons, so the trace lands in `content`. `reasoning_effort: "none"`
-# fails the same way; "low" is the only working off switch (it does not scale).
-REASONING_EFFORT_MODELS = frozenset({"glm-5.3-flash"})
+# GLM chat templates drive thinking with `reasoning_effort` and ignore `enable_thinking`.
+# They recognise only "low" and "high"; every other value, the field's absence included,
+# renders as the "Max" default, so there is nothing to send to turn thinking back up.
+REASONING_EFFORT_MODELS = frozenset({"glm-5.3", "glm-5.3-flash"})
 
 
 def disable_thinking(model: str, body_json: dict) -> dict:

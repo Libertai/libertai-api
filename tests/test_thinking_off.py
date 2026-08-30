@@ -31,3 +31,9 @@ def test_client_supplied_kwarg_wins():
 def test_other_chat_template_kwargs_preserved():
     body = disable_thinking("qwen3.6-35b-a3b", {"chat_template_kwargs": {"clear_thinking": True}})
     assert body["chat_template_kwargs"] == {"clear_thinking": True, "enable_thinking": False}
+
+
+def test_glm_5_3_uses_reasoning_effort():
+    body = disable_thinking("glm-5.3", {"model": "glm-5.3"})
+    assert body["reasoning_effort"] == "low"
+    assert "chat_template_kwargs" not in body
