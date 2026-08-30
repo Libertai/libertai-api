@@ -1,4 +1,4 @@
-from src.thinking import disable_thinking
+from src.thinking import disable_thinking, request_thinking
 
 
 def test_default_model_gets_enable_thinking_kwarg():
@@ -37,3 +37,19 @@ def test_glm_5_3_uses_reasoning_effort():
     body = disable_thinking("glm-5.3", {"model": "glm-5.3"})
     assert body["reasoning_effort"] == "low"
     assert "chat_template_kwargs" not in body
+
+
+def test_thinking_variant_defaults_to_high_effort():
+    for model in ("glm-5.3", "glm-5.3-flash", "GLM-5.3-Flash"):
+        body = request_thinking(model, {"model": model})
+        assert body["reasoning_effort"] == "high"
+
+
+def test_thinking_variant_leaves_other_models_untouched():
+    body = request_thinking("qwen3.6-35b-a3b", {"model": "qwen3.6-35b-a3b"})
+    assert body == {"model": "qwen3.6-35b-a3b"}
+
+
+def test_thinking_variant_client_effort_wins():
+    body = request_thinking("glm-5.3", {"reasoning_effort": "max"})
+    assert body["reasoning_effort"] == "max"
