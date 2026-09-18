@@ -44,6 +44,11 @@ HEALTH_CHECK_INTERVAL = 30  # seconds
 _ready = False
 
 
+def _has_authoritative_state() -> bool:
+    """Keys and model metadata must be loaded before a replica reports ready."""
+    return bool(keys_manager.keys and aleph_service.models)
+
+
 async def run_jobs():
     """Periodic jobs. Leader refreshes upstream state; every replica syncs from Redis."""
     global _ready
@@ -51,17 +56,20 @@ async def run_jobs():
         try:
             if leader.is_leader:
                 await keys_manager.refresh_keys()
+                # Refresh model metadata before the slow per-server health sweep so
+                # /v1/models and /openrouter/models are enriched from the first cycle.
+                await aleph_service.refresh()
                 await server_health_monitor.check_all_servers()
                 await x402_manager.refresh_prices()
-                await aleph_service.refresh()
             else:
                 await keys_manager.sync_from_redis()
+                await aleph_service.sync_from_redis()
                 await server_health_monitor.sync_from_redis()
                 await x402_manager.sync_from_redis()
-                await aleph_service.sync_from_redis()
             # Only mark ready once we actually have authoritative data; otherwise
-            # followers would serve 401s against an empty key set during cold start.
-            if keys_manager.keys:
+            # replicas would serve 401s against an empty key set or empty model
+            # listings against a missing Aleph snapshot during cold start.
+            if _has_authoritative_state():
                 _ready = True
         except Exception as e:
             logger.error(f"Error in run_jobs: {e}", exc_info=True)
@@ -109,6 +117,7 @@ async def health():
     return {
         "status": "ok",
         "keys_loaded": len(keys_manager.keys) > 0,
+        "models_loaded": len(aleph_service.models) > 0,
         "healthy_models": len(healthy_models),
         "prices_loaded": len(x402_manager.prices) > 0,
     }

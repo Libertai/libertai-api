@@ -200,7 +200,7 @@ def test_openai_models_route_does_not_500_on_partial_aggregate_entry(monkeypatch
 def test_openrouter_models_route(monkeypatch):
     saved = config.MODELS
     config.MODELS = {"glm-5.3": ["server1"], "bge-m3": ["server2"]}
-    monkeypatch.setattr(aleph_service, "get_model", lambda model: AGGREGATE.get(model), raising=True)
+    monkeypatch.setattr(aleph_service, "models", dict(AGGREGATE), raising=True)
     monkeypatch.setattr(aleph_service, "is_reasoning_model", lambda model: model == "glm-5.3", raising=True)
     try:
         resp = _client().get("/openrouter/models")
@@ -211,6 +211,14 @@ def test_openrouter_models_route(monkeypatch):
         assert data[0]["schema_version"] == "2.4"
     finally:
         config.MODELS = saved
+
+
+def test_openrouter_models_route_503s_while_aggregate_is_empty(monkeypatch):
+    """Cold start: no Aleph snapshot yet must be a retryable error, not an empty listing."""
+    monkeypatch.setattr(aleph_service, "models", {}, raising=True)
+    resp = _client().get("/openrouter/models")
+    assert resp.status_code == 503
+    assert resp.headers["retry-after"] == "30"
 
 
 def test_libertai_models_route(monkeypatch):

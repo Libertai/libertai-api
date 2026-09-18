@@ -1,7 +1,7 @@
 import time
 from decimal import Decimal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from src.aleph import aleph_service
@@ -171,6 +171,16 @@ async def openrouter_models_list():
     (https://openrouter.ai/docs/guides/community/for-providers).
     Only chat models priced in the Aleph aggregate are listed.
     """
+    if not aleph_service.models:
+        # OpenRouter treats an empty list as authoritative. During cold start the
+        # Aleph snapshot is not loaded yet, so fail with a retryable error instead
+        # of letting a crawler cache an empty listing.
+        raise HTTPException(
+            status_code=503,
+            detail="Model metadata is still loading",
+            headers={"Retry-After": "30"},
+        )
+
     models_data = []
     for model_name in config.MODELS:
         meta = aleph_service.get_model(model_name)
