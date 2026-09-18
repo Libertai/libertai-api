@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from src.aleph import aleph_service
 from src.config import config
+from src.constants import JOB_INTERVAL_SECONDS
 from src.model import _per_token_price, openai_model_entry, openrouter_model_entry, router
 
 META = {
@@ -219,7 +220,7 @@ def test_openrouter_models_route_503s_while_aggregate_is_not_loaded(monkeypatch)
     monkeypatch.setattr(aleph_service, "models_loaded", False, raising=True)
     resp = _client().get("/openrouter/models")
     assert resp.status_code == 503
-    assert resp.headers["retry-after"] == "30"
+    assert resp.headers["retry-after"] == str(JOB_INTERVAL_SECONDS)
 
 
 def test_openrouter_models_route_serves_authoritatively_empty_aggregate(monkeypatch):

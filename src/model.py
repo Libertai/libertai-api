@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from src.aleph import aleph_service
 from src.config import config
+from src.constants import JOB_INTERVAL_SECONDS
 
 router = APIRouter(tags=["Models"])
 
@@ -178,7 +179,7 @@ async def openrouter_models_list():
         raise HTTPException(
             status_code=503,
             detail="Model metadata is still loading",
-            headers={"Retry-After": "30"},
+            headers={"Retry-After": str(JOB_INTERVAL_SECONDS)},
         )
 
     models_data = []

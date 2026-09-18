@@ -18,6 +18,7 @@ from src.aleph_credits import router as aleph_credits_router
 from src.api_keys import KeysManager
 from src.api_keys import close_http_client as close_keys_http_client
 from src.auth import router as auth_router
+from src.constants import JOB_INTERVAL_SECONDS
 from src.health import close_http_client as close_health_http_client
 from src.health import server_health_monitor
 from src.leader import leader
@@ -37,9 +38,6 @@ from src.x402 import x402_manager
 keys_manager = KeysManager()
 logger = setup_logger(__name__)
 
-# Constants
-HEALTH_CHECK_INTERVAL = 30  # seconds
-
 # Set to True after first successful job cycle
 _ready = False
 
@@ -49,23 +47,32 @@ def _has_authoritative_state() -> bool:
     return bool(keys_manager.keys and aleph_service.models_loaded)
 
 
+async def _refresh_state():
+    """Leader refreshes upstream state; every replica syncs from Redis."""
+    if leader.is_leader:
+        await keys_manager.refresh_keys()
+        # Refresh model metadata before the slow per-server health sweep so
+        # /v1/models and /openrouter/models are enriched from the first cycle.
+        await aleph_service.refresh()
+        # Aleph unreachable? Serve the last snapshot published to Redis instead of
+        # stalling readiness while followers recover from the same snapshot.
+        if not aleph_service.models_loaded:
+            await aleph_service.sync_from_redis()
+        await server_health_monitor.check_all_servers()
+        await x402_manager.refresh_prices()
+    else:
+        await keys_manager.sync_from_redis()
+        await aleph_service.sync_from_redis()
+        await server_health_monitor.sync_from_redis()
+        await x402_manager.sync_from_redis()
+
+
 async def run_jobs():
     """Periodic jobs. Leader refreshes upstream state; every replica syncs from Redis."""
     global _ready
     while True:
         try:
-            if leader.is_leader:
-                await keys_manager.refresh_keys()
-                # Refresh model metadata before the slow per-server health sweep so
-                # /v1/models and /openrouter/models are enriched from the first cycle.
-                await aleph_service.refresh()
-                await server_health_monitor.check_all_servers()
-                await x402_manager.refresh_prices()
-            else:
-                await keys_manager.sync_from_redis()
-                await aleph_service.sync_from_redis()
-                await server_health_monitor.sync_from_redis()
-                await x402_manager.sync_from_redis()
+            await _refresh_state()
             # Only mark ready once we actually have authoritative data; otherwise
             # replicas would serve 401s against an empty key set or empty model
             # listings against a missing Aleph snapshot during cold start.
@@ -73,7 +80,7 @@ async def run_jobs():
                 _ready = True
         except Exception as e:
             logger.error(f"Error in run_jobs: {e}", exc_info=True)
-        await asyncio.sleep(HEALTH_CHECK_INTERVAL)
+        await asyncio.sleep(JOB_INTERVAL_SECONDS)
 
 
 @asynccontextmanager
