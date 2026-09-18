@@ -67,6 +67,14 @@ def test_sync_from_redis_without_models_key_keeps_state(monkeypatch):
     assert service.models == {}
 
 
+def _refresh(monkeypatch, payload, service=None):
+    service = service or AlephService()
+    monkeypatch.setattr(aleph_module.httpx, "AsyncClient", lambda **kwargs: _FakeAsyncClient(payload))
+    monkeypatch.setattr(aleph_module, "get_redis", lambda: _FakeRedis())
+    asyncio.run(service.refresh())
+    return service
+
+
 def test_refresh_marks_models_loaded(monkeypatch):
     payload = {
         "data": {
@@ -76,11 +84,36 @@ def test_refresh_marks_models_loaded(monkeypatch):
             }
         }
     }
-    service = AlephService()
-    monkeypatch.setattr(aleph_module.httpx, "AsyncClient", lambda **kwargs: _FakeAsyncClient(payload))
-    monkeypatch.setattr(aleph_module, "get_redis", lambda: _FakeRedis())
-    asyncio.run(service.refresh())
+    service = _refresh(monkeypatch, payload)
     assert service.models_loaded
     assert "glm-5.3" in service.models
     assert service.is_reasoning_model("glm-5.3")
     assert service.resolve("alias") == "glm-5.3"
+
+
+def _service_with_previous_state():
+    service = AlephService()
+    service.models = {"glm-5.3": {"id": "glm-5.3"}}
+    service.models_loaded = True
+    return service
+
+
+def test_refresh_without_pricing_aggregate_keeps_previous_state(monkeypatch):
+    service = _service_with_previous_state()
+    _refresh(monkeypatch, {"data": {}}, service)
+    assert service.models == {"glm-5.3": {"id": "glm-5.3"}}
+    assert service.models_loaded
+    assert service._last_fetch_time == 0  # retried on the next cycle
+
+
+def test_refresh_with_malformed_models_keeps_previous_state(monkeypatch):
+    service = _service_with_previous_state()
+    _refresh(monkeypatch, {"data": {"LTAI_PRICING": {"models": None}}}, service)
+    assert service.models == {"glm-5.3": {"id": "glm-5.3"}}
+    assert service.models_loaded
+
+
+def test_refresh_with_empty_models_list_is_authoritatively_empty(monkeypatch):
+    service = _refresh(monkeypatch, {"data": {"LTAI_PRICING": {"models": []}}})
+    assert service.models_loaded
+    assert service.models == {}

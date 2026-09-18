@@ -39,7 +39,15 @@ class AlephService:
                 response.raise_for_status()
                 data = response.json()
 
-            pricing_data = data.get("data", {}).get("LTAI_PRICING", {})
+            pricing_data = data.get("data", {}).get("LTAI_PRICING")
+            raw_models = pricing_data.get("models") if isinstance(pricing_data, dict) else None
+            if not isinstance(raw_models, list):
+                # Missing or malformed payload (API error, schema change): keep the
+                # previous snapshot and retry next cycle instead of treating the
+                # models list as authoritatively empty.
+                logger.error("Aleph response has no valid LTAI_PRICING.models list; keeping the previous snapshot")
+                return
+
             raw_redirections = pricing_data.get("redirections", [])
 
             new_map = {}
@@ -52,7 +60,6 @@ class AlephService:
             self.redirections = new_map
             logger.debug(f"Loaded {len(self.redirections)} model redirections")
 
-            raw_models = pricing_data.get("models", [])
             new_reasoning = set()
             new_vision = set()
             new_models = {}
@@ -66,6 +73,9 @@ class AlephService:
                     new_reasoning.add(model_id)
                 if text_caps.get("vision", False):
                     new_vision.add(model_id)
+
+            if self.models and not new_models:
+                logger.warning("Aleph aggregate now reports zero models; publishing an authoritative empty snapshot")
 
             self.reasoning_models = new_reasoning
             self.vision_models = new_vision
