@@ -46,7 +46,7 @@ _ready = False
 
 def _has_authoritative_state() -> bool:
     """Keys and model metadata must be loaded before a replica reports ready."""
-    return bool(keys_manager.keys and aleph_service.models)
+    return bool(keys_manager.keys and aleph_service.models_loaded)
 
 
 async def run_jobs():
@@ -110,14 +110,22 @@ app.add_middleware(
 async def health():
     """Health check that reports ready only after first full initialization cycle."""
     if not _ready:
-        return JSONResponse(status_code=503, content={"status": "starting"})
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "starting",
+                "keys_loaded": len(keys_manager.keys) > 0,
+                "models_loaded": aleph_service.models_loaded,
+                "prices_loaded": len(x402_manager.prices) > 0,
+            },
+        )
 
     healthy_models = {model: urls for model, urls in server_health_monitor.healthy_model_urls.items() if urls}
 
     return {
         "status": "ok",
         "keys_loaded": len(keys_manager.keys) > 0,
-        "models_loaded": len(aleph_service.models) > 0,
+        "models_loaded": aleph_service.models_loaded,
         "healthy_models": len(healthy_models),
         "prices_loaded": len(x402_manager.prices) > 0,
     }

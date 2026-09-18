@@ -201,6 +201,7 @@ def test_openrouter_models_route(monkeypatch):
     saved = config.MODELS
     config.MODELS = {"glm-5.3": ["server1"], "bge-m3": ["server2"]}
     monkeypatch.setattr(aleph_service, "models", dict(AGGREGATE), raising=True)
+    monkeypatch.setattr(aleph_service, "models_loaded", True, raising=True)
     monkeypatch.setattr(aleph_service, "is_reasoning_model", lambda model: model == "glm-5.3", raising=True)
     try:
         resp = _client().get("/openrouter/models")
@@ -213,12 +214,26 @@ def test_openrouter_models_route(monkeypatch):
         config.MODELS = saved
 
 
-def test_openrouter_models_route_503s_while_aggregate_is_empty(monkeypatch):
+def test_openrouter_models_route_503s_while_aggregate_is_not_loaded(monkeypatch):
     """Cold start: no Aleph snapshot yet must be a retryable error, not an empty listing."""
-    monkeypatch.setattr(aleph_service, "models", {}, raising=True)
+    monkeypatch.setattr(aleph_service, "models_loaded", False, raising=True)
     resp = _client().get("/openrouter/models")
     assert resp.status_code == 503
     assert resp.headers["retry-after"] == "30"
+
+
+def test_openrouter_models_route_serves_authoritatively_empty_aggregate(monkeypatch):
+    """A loaded but empty aggregate is authoritative: 200 with an empty list."""
+    saved = config.MODELS
+    config.MODELS = {"glm-5.3": ["server1"]}
+    monkeypatch.setattr(aleph_service, "models", {}, raising=True)
+    monkeypatch.setattr(aleph_service, "models_loaded", True, raising=True)
+    try:
+        resp = _client().get("/openrouter/models")
+        assert resp.status_code == 200
+        assert resp.json() == {"data": []}
+    finally:
+        config.MODELS = saved
 
 
 def test_libertai_models_route(monkeypatch):

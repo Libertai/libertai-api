@@ -23,6 +23,8 @@ class AlephService:
         self.reasoning_models: set[str] = set()
         self.vision_models: set[str] = set()
         self.models: dict[str, dict] = {}
+        # Distinguishes "no snapshot yet" (serve 503) from "authoritatively empty".
+        self.models_loaded = False
 
     async def refresh(self):
         """Leader-only: fetch redirections and model capabilities from Aleph and publish to Redis."""
@@ -68,6 +70,7 @@ class AlephService:
             self.reasoning_models = new_reasoning
             self.vision_models = new_vision
             self.models = new_models
+            self.models_loaded = True
             logger.debug(f"Loaded {len(self.reasoning_models)} reasoning models, {len(self.vision_models)} vision models")
 
             self._last_fetch_time = current_time
@@ -98,7 +101,11 @@ class AlephService:
                 self.redirections = dict(snap.get("redirections") or {})
                 self.reasoning_models = set(snap.get("reasoning_models") or [])
                 self.vision_models = set(snap.get("vision_models") or [])
-                self.models = dict(snap.get("models") or {})
+                # A snapshot from a pre-"models" release must not clear the local
+                # cache or mark metadata as loaded.
+                if "models" in snap:
+                    self.models = dict(snap.get("models") or {})
+                    self.models_loaded = True
         except Exception as e:
             logger.error(f"Failed to sync Aleph snapshot from Redis: {e}", exc_info=True)
 

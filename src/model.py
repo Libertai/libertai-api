@@ -171,7 +171,7 @@ async def openrouter_models_list():
     (https://openrouter.ai/docs/guides/community/for-providers).
     Only chat models priced in the Aleph aggregate are listed.
     """
-    if not aleph_service.models:
+    if not aleph_service.models_loaded:
         # OpenRouter treats an empty list as authoritative. During cold start the
         # Aleph snapshot is not loaded yet, so fail with a retryable error instead
         # of letting a crawler cache an empty listing.
