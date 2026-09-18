@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from src.aleph import aleph_service
 from src.config import config
+from src.constants import JOB_INTERVAL_SECONDS
 from src.model import _per_token_price, openai_model_entry, openrouter_model_entry, router
 
 META = {
@@ -200,7 +201,8 @@ def test_openai_models_route_does_not_500_on_partial_aggregate_entry(monkeypatch
 def test_openrouter_models_route(monkeypatch):
     saved = config.MODELS
     config.MODELS = {"glm-5.3": ["server1"], "bge-m3": ["server2"]}
-    monkeypatch.setattr(aleph_service, "get_model", lambda model: AGGREGATE.get(model), raising=True)
+    monkeypatch.setattr(aleph_service, "models", dict(AGGREGATE), raising=True)
+    monkeypatch.setattr(aleph_service, "models_loaded", True, raising=True)
     monkeypatch.setattr(aleph_service, "is_reasoning_model", lambda model: model == "glm-5.3", raising=True)
     try:
         resp = _client().get("/openrouter/models")
@@ -209,6 +211,28 @@ def test_openrouter_models_route(monkeypatch):
         ids = [entry["id"] for entry in data]
         assert ids == ["glm-5.3", "glm-5.3-thinking"]
         assert data[0]["schema_version"] == "2.4"
+    finally:
+        config.MODELS = saved
+
+
+def test_openrouter_models_route_503s_while_aggregate_is_not_loaded(monkeypatch):
+    """Cold start: no Aleph snapshot yet must be a retryable error, not an empty listing."""
+    monkeypatch.setattr(aleph_service, "models_loaded", False, raising=True)
+    resp = _client().get("/openrouter/models")
+    assert resp.status_code == 503
+    assert resp.headers["retry-after"] == str(JOB_INTERVAL_SECONDS)
+
+
+def test_openrouter_models_route_serves_authoritatively_empty_aggregate(monkeypatch):
+    """A loaded but empty aggregate is authoritative: 200 with an empty list."""
+    saved = config.MODELS
+    config.MODELS = {"glm-5.3": ["server1"]}
+    monkeypatch.setattr(aleph_service, "models", {}, raising=True)
+    monkeypatch.setattr(aleph_service, "models_loaded", True, raising=True)
+    try:
+        resp = _client().get("/openrouter/models")
+        assert resp.status_code == 200
+        assert resp.json() == {"data": []}
     finally:
         config.MODELS = saved
 
