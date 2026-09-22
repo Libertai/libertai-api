@@ -213,12 +213,12 @@ def test_no_auth_request_still_reaches_x402_payment_flow(monkeypatch):
     assert resp.json() == {"x402": True}
 
 
-def _stub_forwarding(monkeypatch, load_sequence):
+def _stub_forwarding(monkeypatch, load_sequence, models=None):
     """Stub the upstream so a request reaching the forwarding loop fails over to
     the all-servers-failed 503. Returns the list of send calls (empty when the
     gate rejected before any upstream attempt). load_sequence feeds successive
     get_all_loads() snapshots; the last value repeats once exhausted."""
-    monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
+    monkeypatch.setattr(proxy.config, "MODELS", models or {"m": ["http://up"]})
     monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
 
     snapshots = list(load_sequence)
@@ -357,6 +357,99 @@ def test_free_key_rejected_at_hard_load_mid_wait(monkeypatch):
     monkeypatch.setattr(proxy, "_sleep", _no_sleep)
 
     resp = _post_with_key("free")
+
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "model_overloaded"
+    assert sends == []
+
+
+def test_free_key_at_exact_soft_load_waits(monkeypatch):
+    # The wait condition is >=: a pool sitting exactly at the soft threshold
+    # still waits for it to drain before proceeding.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 25}, {"http://up": 0}])
+    KeysManager().keys = {"free"}
+    KeysManager().tiers = {"free": "free"}
+
+    waits: list[float] = []
+
+    async def _no_sleep(seconds):
+        waits.append(seconds)
+
+    monkeypatch.setattr(proxy, "_sleep", _no_sleep)
+
+    resp = _post_with_key("free")
+
+    assert resp.status_code == 503
+    assert waits == [proxy.FREE_GATE_POLL_INTERVAL]
+    assert len(sends) == 1
+
+
+def test_free_key_below_soft_load_proceeds_immediately(monkeypatch):
+    # Below the soft threshold a free key goes straight to the forwarding loop
+    # without waiting.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 24}])
+    KeysManager().keys = {"free"}
+    KeysManager().tiers = {"free": "free"}
+
+    waits: list[float] = []
+
+    async def _no_sleep(seconds):
+        waits.append(seconds)
+
+    monkeypatch.setattr(proxy, "_sleep", _no_sleep)
+
+    resp = _post_with_key("free")
+
+    assert resp.status_code == 503
+    assert waits == []
+    assert len(sends) == 1
+
+
+def test_refreshed_loads_feed_server_sorting_after_wait(monkeypatch):
+    # After a wait the gate hands back the refreshed snapshot, and the server
+    # sorting below must use it: the server that drained while the request
+    # waited is tried first, not the one that was idle on arrival.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(
+        monkeypatch,
+        [{"http://a": 30, "http://b": 0}, {"http://a": 0, "http://b": 30}],
+        models={"m": ["http://a", "http://b"]},
+    )
+    KeysManager().keys = {"free"}
+    KeysManager().tiers = {"free": "free"}
+
+    async def _no_sleep(seconds):
+        pass
+
+    clock = [0.0]
+
+    def _fake_monotonic():
+        clock[0] += proxy.FREE_GATE_POLL_INTERVAL
+        return clock[0]
+
+    monkeypatch.setattr(proxy, "_sleep", _no_sleep)
+    monkeypatch.setattr(proxy, "_monotonic", _fake_monotonic)
+
+    resp = _post_with_key("free")
+
+    assert resp.status_code == 503
+    assert [url.split("//", 1)[1].split("/", 1)[0] for url in sends] == ["a", "b"]
+
+
+def test_free_tier_comparison_is_case_insensitive(monkeypatch):
+    # The linchpin comparison must not silently fail open on casing drift.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 50}])
+    KeysManager().keys = {"oddcase"}
+    KeysManager().tiers = {"oddcase": "Free"}
+
+    resp = _post_with_key("oddcase")
 
     assert resp.status_code == 503
     assert resp.json()["error"]["code"] == "model_overloaded"

@@ -38,8 +38,9 @@ def model_overloaded_response(model_name: str) -> JSONResponse:
                 "code": "model_overloaded",
             }
         },
-        # Matches the gate's own max wait (src/constants.py): a retry that honors
-        # the hint re-enters with roughly the admission chance we'd have granted
-        # ourselves, instead of hammering the gate back to back.
+        # On the order of the gate's own max wait (src/constants.py): a retry that
+        # honors the hint re-enters with roughly the admission chance we'd have
+        # granted ourselves, instead of hammering the gate back to back. The gate's
+        # worst-case in-gate time is this plus one poll overshoot.
         headers={"retry-after": str(int(FREE_GATE_MAX_WAIT))},
     )

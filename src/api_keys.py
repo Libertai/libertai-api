@@ -70,8 +70,9 @@ class KeysManager:
     # key -> {"reason": str, "message": str} for real-but-unusable keys (limits/credits/disabled)
     invalid_keys: ClassVar[dict[str, dict]] = {}
     # key -> tier ("free", "go", "plus", ...). Metadata only — the gate in proxy.py
-    # treats anything other than an explicit "free" (paid tier or missing entry) as
-    # ungated, so sync skew fails open rather than over-sheds.
+    # treats anything other than an explicit "free" (compared case-insensitively;
+    # paid tier or missing entry) as ungated, so sync skew fails open rather than
+    # over-sheds.
     tiers: ClassVar[dict[str, str]] = {}
 
     def __new__(cls, *args, **kwargs):

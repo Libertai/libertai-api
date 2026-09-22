@@ -86,7 +86,9 @@ async def _free_tier_gate(
     under the hard threshold all pass at once, and replicas gate independently.
     Bounded overshoot is expected for a tunable heuristic.
     """
-    if api_key is None or keys_manager.tier(api_key) != "free":
+    # Normalized comparison: the gate hinges on it, so casing drift ("Free")
+    # must not silently fail every free-tier key open.
+    if api_key is None or (keys_manager.tier(api_key) or "").lower() != "free":
         return loads, None
 
     pool_load = _pool_load(model, loads)
