@@ -27,7 +27,7 @@ async def close_http_client() -> None:
     await client.aclose()
 
 
-async def get_active_keys() -> tuple[set, dict, dict[str, str]] | None:
+async def get_active_keys() -> tuple[set[str], dict[str, dict], dict[str, str]] | None:
     try:
         response = await client.get(
             f"{config.BACKEND_API_URL}/api-keys/admin/list",
@@ -140,6 +140,7 @@ async def distribute_keys_to_clients():
 
     try:
         # Old boxes read only "keys" from the decrypted payload; extra fields are ignored.
+        # tiers are deliberately proxy-only: boxes authenticate on keys/invalid_keys alone.
         signed_payload = create_signed_payload(
             {"keys": keys_list, "invalid_keys": keys_manager.invalid_keys}, config.PRIVATE_KEY
         )
