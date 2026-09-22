@@ -37,9 +37,11 @@ def _reset_keys_manager():
     manager = KeysManager()
     saved_keys = manager.keys.copy()
     saved_invalid = manager.invalid_keys.copy()
+    saved_tiers = manager.tiers.copy()
     yield
     manager.keys = saved_keys
     manager.invalid_keys = saved_invalid
+    manager.tiers = saved_tiers
 
 
 def _client():
@@ -206,6 +208,159 @@ def test_no_auth_request_still_reaches_x402_payment_flow(monkeypatch):
     )
 
     resp = _client().post("/v1/chat/completions", json={"model": "m"})
+
+    assert resp.status_code == 402
+    assert resp.json() == {"x402": True}
+
+
+def _stub_forwarding(monkeypatch, load_sequence):
+    """Stub the upstream so a request reaching the forwarding loop fails over to
+    the all-servers-failed 503. Returns the list of send calls (empty when the
+    gate rejected before any upstream attempt). load_sequence feeds successive
+    get_all_loads() snapshots; the last value repeats once exhausted."""
+    monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
+    monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
+
+    snapshots = list(load_sequence)
+
+    async def _loads():
+        if len(snapshots) > 1:
+            return snapshots.pop(0)
+        return snapshots[0]
+
+    async def _noop(*args, **kwargs):
+        return None
+
+    sends: list[str] = []
+
+    async def _refuse(req, **kwargs):
+        sends.append(str(req.url))
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(proxy, "get_all_loads", _loads)
+    monkeypatch.setattr(proxy, "load_acquire", _noop)
+    monkeypatch.setattr(proxy, "load_release", _noop)
+    monkeypatch.setattr(proxy.client, "send", _refuse)
+    return sends
+
+
+def _post_with_key(key: str | None):
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    return _client().post("/v1/chat/completions", json={"model": "m"}, headers=headers)
+
+
+def test_free_key_at_hard_load_rejected_with_503_before_any_upstream_call(monkeypatch):
+    # At the hard threshold a known free-tier key is rejected outright with the
+    # OpenAI-shaped body openai-node displays — no upstream call is made.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 50}])
+    KeysManager().keys = {"free"}
+    KeysManager().tiers = {"free": "free"}
+
+    resp = _post_with_key("free")
+
+    assert resp.status_code == 503
+    assert resp.json() == {
+        "error": {
+            "message": "Model 'm' is currently overloaded with other requests. Try again later.",
+            "type": "server_error",
+            "code": "model_overloaded",
+        }
+    }
+    assert sends == []
+
+
+def test_paid_key_bypasses_the_gate_at_hard_load(monkeypatch):
+    # A paid tier must reach the forwarding loop even when the pool is at hard
+    # load — the gate exists to protect paid users from free load, not to block
+    # them. Reaching the all-servers-failed 503 proves the gate didn't block.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    _stub_forwarding(monkeypatch, [{"http://up": 50}])
+    KeysManager().keys = {"paid"}
+    KeysManager().tiers = {"paid": "pro"}
+
+    resp = _post_with_key("paid")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "All servers unavailable for model m"
+
+
+def test_free_key_under_soft_load_waits_then_proceeds(monkeypatch):
+    # Between the soft and hard thresholds a free key waits for the pool to
+    # drain below the soft threshold, then falls through to the forwarding loop.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 30}, {"http://up": 0}])
+    KeysManager().keys = {"free"}
+    KeysManager().tiers = {"free": "free"}
+
+    waits: list[float] = []
+
+    async def _no_sleep(seconds):
+        waits.append(seconds)
+
+    monkeypatch.setattr(proxy.asyncio, "sleep", _no_sleep)
+
+    resp = _post_with_key("free")
+
+    assert resp.status_code == 503
+    assert waits == [proxy.FREE_GATE_POLL_INTERVAL]
+    assert len(sends) == 1
+
+
+def test_free_key_waits_bounded_then_proceeds(monkeypatch):
+    # Soft load is a wait, not a wall: when the pool stays above the soft
+    # threshold past the max wait, the free key proceeds anyway.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    monkeypatch.setattr(proxy, "FREE_GATE_MAX_WAIT", 0.0)
+    _stub_forwarding(monkeypatch, [{"http://up": 30}])
+    KeysManager().keys = {"free"}
+    KeysManager().tiers = {"free": "free"}
+
+    resp = _post_with_key("free")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "All servers unavailable for model m"
+
+
+def test_unknown_tier_key_bypasses_the_gate(monkeypatch):
+    # A valid key with no tier entry (sync skew) fails open: it reaches the
+    # forwarding loop even at hard load rather than being over-shed.
+    _stub_forwarding(monkeypatch, [{"http://up": 50}])
+    KeysManager().keys = {"skew"}
+    KeysManager().tiers = {}
+
+    resp = _post_with_key("skew")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "All servers unavailable for model m"
+
+
+def test_no_auth_x402_request_bypasses_the_gate_at_hard_load(monkeypatch):
+    # The admission gate must not touch the x402 branch: a request with no API
+    # key gets the 402 payment response even at hard load.
+    from fastapi.responses import JSONResponse
+
+    _stub_forwarding(monkeypatch, [{"http://up": 50}])
+
+    async def _max_price(model, body_json):
+        return 1.0
+
+    async def _requirements(model_name, max_price, resource_url):
+        return [{"scheme": "exact"}]
+
+    monkeypatch.setattr(proxy.x402_manager, "compute_max_price", _max_price)
+    monkeypatch.setattr(proxy.x402_manager, "fetch_payment_requirements", _requirements)
+    monkeypatch.setattr(
+        proxy.x402_manager,
+        "build_402_response",
+        lambda requirements: JSONResponse(status_code=402, content={"x402": True}),
+    )
+
+    resp = _post_with_key(None)
 
     assert resp.status_code == 402
     assert resp.json() == {"x402": True}

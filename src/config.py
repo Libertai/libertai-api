@@ -5,6 +5,18 @@ import os
 from dotenv import load_dotenv
 
 
+def _int_env(name: str, default: int) -> int:
+    """Read an integer env var; fall back to the default on missing or malformed values."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logging.getLogger(__name__).error(f"Invalid {name}='{raw}': falling back to {default}")
+        return default
+
+
 class _Config:
     BACKEND_API_URL: str
     BACKEND_SECRET_TOKEN: str
@@ -22,6 +34,8 @@ class _Config:
     ALEPH_SENDER_PRIVATE_KEY: str
     REDIS_URL: str
     SEARCH_SERVICE_URL: str
+    FREE_SOFT_LOAD: int
+    FREE_HARD_LOAD: int
 
     LOG_LEVEL: int
 
@@ -43,6 +57,16 @@ class _Config:
         self.ALEPH_SENDER_PRIVATE_KEY = os.getenv("ALEPH_SENDER_PRIVATE_KEY", "")
         self.REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
         self.SEARCH_SERVICE_URL = os.getenv("SEARCH_SERVICE_URL", "https://search.libertai.io").rstrip("/")
+
+        # Free-tier admission gate thresholds (src/proxy.py): aggregate inflight
+        # requests across the requested model's servers. At the soft threshold
+        # free-tier keys wait (bounded) for the pool to drain; at the hard
+        # threshold they are rejected outright. Paid tiers bypass the gate.
+        # Defaults are sized for a pool of ~2 boxes at ~25 concurrent
+        # generations each, meant to be tuned via env against real load data;
+        # setting the hard load very high effectively disables the gate.
+        self.FREE_SOFT_LOAD = _int_env("FREE_SOFT_LOAD", 25)
+        self.FREE_HARD_LOAD = _int_env("FREE_HARD_LOAD", 50)
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
