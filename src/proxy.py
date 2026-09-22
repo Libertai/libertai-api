@@ -100,6 +100,9 @@ async def _free_tier_gate(
             logger.info(f"Free-tier request to '{model_name}' waiting for pool drain under soft load")
             waited = True
         await _sleep(FREE_GATE_POLL_INTERVAL)
+        # Each poll HGETALLs every configured server across all models, not just
+        # this model's — acceptable at the current box scale; revisit if wait
+        # volumes grow.
         loads = await get_all_loads()
         pool_load = _pool_load(model, loads)
         if pool_load >= config.FREE_HARD_LOAD:

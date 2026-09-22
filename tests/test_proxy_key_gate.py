@@ -268,6 +268,7 @@ def test_free_key_at_hard_load_rejected_with_503_before_any_upstream_call(monkey
             "code": "model_overloaded",
         }
     }
+    assert resp.headers["retry-after"] == "5"
     assert sends == []
 
 
@@ -314,6 +315,8 @@ def test_free_key_waits_up_to_max_wait_then_proceeds(monkeypatch):
     # Soft load is a wait, not a wall: while the pool stays above the soft
     # threshold the free key polls until the max wait elapses, then proceeds
     # anyway into the (still-loaded) pool.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
     sends = _stub_forwarding(monkeypatch, [{"http://up": 30}])
     KeysManager().keys = {"free"}
     KeysManager().tiers = {"free": "free"}

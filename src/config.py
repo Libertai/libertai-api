@@ -67,6 +67,13 @@ class _Config:
         # setting the hard load very high effectively disables the gate.
         self.FREE_SOFT_LOAD = _int_env("FREE_SOFT_LOAD", 25)
         self.FREE_HARD_LOAD = _int_env("FREE_HARD_LOAD", 50)
+        # Still fails safe (SOFT > HARD just disables the wait phase), but an
+        # operator who fat-fingers the values should hear about it.
+        if self.FREE_SOFT_LOAD > self.FREE_HARD_LOAD:
+            logging.getLogger(__name__).warning(
+                f"FREE_SOFT_LOAD ({self.FREE_SOFT_LOAD}) > FREE_HARD_LOAD ({self.FREE_HARD_LOAD}): "
+                f"the gate wait phase is disabled"
+            )
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
