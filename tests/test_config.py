@@ -2,8 +2,10 @@ from src.config import _Config
 
 
 def test_free_thresholds_default_when_env_unset(monkeypatch):
-    monkeypatch.delenv("FREE_SOFT_LOAD", raising=False)
-    monkeypatch.delenv("FREE_HARD_LOAD", raising=False)
+    # Blank (not delenv) so a developer's local .env can't re-set the value via
+    # load_dotenv; _int_env treats blank like unset.
+    monkeypatch.setenv("FREE_SOFT_LOAD", "")
+    monkeypatch.setenv("FREE_HARD_LOAD", "")
     cfg = _Config()
     assert cfg.FREE_SOFT_LOAD == 25
     assert cfg.FREE_HARD_LOAD == 50

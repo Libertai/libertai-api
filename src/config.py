@@ -68,11 +68,13 @@ class _Config:
         self.FREE_SOFT_LOAD = _int_env("FREE_SOFT_LOAD", 25)
         self.FREE_HARD_LOAD = _int_env("FREE_HARD_LOAD", 50)
         # Still fails safe (SOFT > HARD just disables the wait phase), but an
-        # operator who fat-fingers the values should hear about it.
-        if self.FREE_SOFT_LOAD > self.FREE_HARD_LOAD:
+        # operator who fat-fingers the values should hear about it. Same for a
+        # non-positive value: HARD <= 0 rejects every free request, SOFT = 0
+        # forces the wait even on an idle pool.
+        if self.FREE_SOFT_LOAD > self.FREE_HARD_LOAD or self.FREE_HARD_LOAD <= 0:
             logging.getLogger(__name__).warning(
-                f"FREE_SOFT_LOAD ({self.FREE_SOFT_LOAD}) > FREE_HARD_LOAD ({self.FREE_HARD_LOAD}): "
-                f"the gate wait phase is disabled"
+                f"FREE_SOFT_LOAD ({self.FREE_SOFT_LOAD}) / FREE_HARD_LOAD ({self.FREE_HARD_LOAD}): "
+                f"expected 0 < SOFT <= HARD; the gate is misconfigured"
             )
 
         # Load models configuration from environment variable or file
