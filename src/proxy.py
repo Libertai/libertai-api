@@ -50,7 +50,7 @@ def _is_context_length_error(body: bytes) -> bool:
 
 def _pool_load(model: str, loads: dict[str, int]) -> int:
     """Aggregate inflight requests across the model's configured servers."""
-    return sum(loads.get(s, 0) for s in config.MODELS.get(model, []))
+    return sum(loads.get(s, 0) for s in set(config.MODELS.get(model, [])))
 
 
 # Module-level aliases so tests can patch the sleeper/clock for the gate below
@@ -86,9 +86,13 @@ async def _free_tier_gate(
     under the hard threshold all pass at once, and replicas gate independently.
     Bounded overshoot is expected for a tunable heuristic.
     """
-    # Normalized comparison: the gate hinges on it, so casing drift ("Free")
-    # must not silently fail every free-tier key open.
-    if api_key is None or (keys_manager.tier(api_key) or "").lower() != "free":
+    # Membership gating: tiers is metadata only, so a key outside the valid set
+    # (possible only with inconsistent backend data) fails open like any other
+    # unknown. The tier comparison is normalized because the gate hinges on it:
+    # casing drift ("Free") must not silently fail every free-tier key open.
+    if api_key is None or not keys_manager.key_exists(api_key):
+        return loads, None
+    if (keys_manager.tier(api_key) or "").lower() != "free":
         return loads, None
 
     pool_load = _pool_load(model, loads)

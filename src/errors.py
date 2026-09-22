@@ -1,4 +1,5 @@
 from http import HTTPStatus
+from math import ceil
 
 from fastapi.responses import JSONResponse
 
@@ -42,5 +43,5 @@ def model_overloaded_response(model_name: str) -> JSONResponse:
         # honors the hint re-enters with roughly the admission chance we'd have
         # granted ourselves, instead of hammering the gate back to back. The gate's
         # worst-case in-gate time is this plus one poll overshoot.
-        headers={"retry-after": str(int(FREE_GATE_MAX_WAIT))},
+        headers={"retry-after": str(ceil(FREE_GATE_MAX_WAIT))},
     )

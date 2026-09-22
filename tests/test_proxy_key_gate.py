@@ -456,6 +456,41 @@ def test_free_tier_comparison_is_case_insensitive(monkeypatch):
     assert sends == []
 
 
+def test_key_in_tiers_but_not_in_keys_bypasses_the_gate(monkeypatch):
+    # tiers is metadata only: eligibility gates on valid-keys membership, so a
+    # key outside the valid set (possible only with inconsistent backend data)
+    # fails open even when it carries a "free" tier.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 50}])
+    KeysManager().keys = set()
+    KeysManager().tiers = {"ghost": "free"}
+
+    resp = _post_with_key("ghost")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "All servers unavailable for model m"
+    assert len(sends) == 1
+
+
+def test_blocked_key_at_hard_load_gets_403_not_gate_503(monkeypatch):
+    # The invalid-key 403 is decided before the gate; a blocked free-tier key at
+    # hard load must get its reason response, not model_overloaded. Pins the
+    # precedence that currently holds by statement ordering in proxy_request.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 50}])
+    KeysManager().keys = set()
+    KeysManager().invalid_keys = {"blocked": {"reason": "key_monthly_limit", "message": "Monthly limit reached."}}
+    KeysManager().tiers = {"blocked": "free"}
+
+    resp = _post_with_key("blocked")
+
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "key_monthly_limit"
+    assert sends == []
+
+
 def test_unknown_tier_key_bypasses_the_gate(monkeypatch):
     # A valid key with no tier entry (sync skew) fails open: it reaches the
     # forwarding loop even at hard load rather than being over-shed.
