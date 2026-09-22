@@ -459,6 +459,8 @@ def test_free_tier_comparison_is_case_insensitive(monkeypatch):
 def test_unknown_tier_key_bypasses_the_gate(monkeypatch):
     # A valid key with no tier entry (sync skew) fails open: it reaches the
     # forwarding loop even at hard load rather than being over-shed.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
     _stub_forwarding(monkeypatch, [{"http://up": 50}])
     KeysManager().keys = {"skew"}
     KeysManager().tiers = {}
@@ -474,6 +476,8 @@ def test_no_auth_x402_request_bypasses_the_gate_at_hard_load(monkeypatch):
     # key gets the 402 payment response even at hard load.
     from fastapi.responses import JSONResponse
 
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
     _stub_forwarding(monkeypatch, [{"http://up": 50}])
 
     async def _max_price(model, body_json):

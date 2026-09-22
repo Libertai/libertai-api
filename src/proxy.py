@@ -97,14 +97,16 @@ async def _free_tier_gate(
 
     deadline = _monotonic() + FREE_GATE_MAX_WAIT
     waited = False
-    while _pool_load(model, loads) >= config.FREE_SOFT_LOAD and _monotonic() < deadline:
+    while pool_load >= config.FREE_SOFT_LOAD and _monotonic() < deadline:
         if not waited:
             logger.info(f"Free-tier request to '{model_name}' waiting for pool drain under soft load")
             waited = True
         await _sleep(FREE_GATE_POLL_INTERVAL)
         # Each poll HGETALLs every configured server across all models, not just
         # this model's — acceptable at the current box scale; revisit if wait
-        # volumes grow.
+        # volumes grow. Waiters hold no lease, so a draining pool admits the
+        # whole waiting cohort at once; jittered polls or a waiter cap are the
+        # first levers if that pressure shows up.
         loads = await get_all_loads()
         pool_load = _pool_load(model, loads)
         if pool_load >= config.FREE_HARD_LOAD:
