@@ -34,6 +34,16 @@ from src.x402 import x402_manager
 
 router = APIRouter(tags=["Proxy"])
 
+# vLLM refuses an over-long prompt at admission with a 400; the surrounding wording
+# changes between versions, so match on the phrase that has stayed constant.
+_CONTEXT_LENGTH_MARKER = "maximum context length"
+
+
+def _is_context_length_error(body: bytes) -> bool:
+    """True when a 400 body says the prompt exceeds the server's context window."""
+    return _CONTEXT_LENGTH_MARKER in body.decode("utf-8", "replace").lower()
+
+
 keys_manager = KeysManager()
 
 
@@ -277,6 +287,21 @@ async def proxy_request(
                 last_error = Exception(f"HTTP {response.status_code} from {server}")
                 continue
 
+            # Replicas run different --max-model-len, so a prompt one refuses for length
+            # can still fit on a larger one. The body is small and the response ends here
+            # either way, so read it eagerly to classify.
+            bad_request_body: bytes | None = None
+            if response.status_code == HTTPStatus.BAD_REQUEST:
+                bad_request_body = await response.aread()
+                if _is_context_length_error(bad_request_body) and attempt < len(servers_to_try):
+                    await response.aclose()
+                    logger.warning(
+                        f"Context-length rejection from {url} (attempt {attempt}/{len(servers_to_try)}); "
+                        f"retrying on another server"
+                    )
+                    last_error = Exception(f"HTTP 400 context length from {server}")
+                    continue
+
             # Success! Update the preferred instances map and create the cookie header
             preferred_instances_map[model] = server
             updated_cookie_value = json.dumps(preferred_instances_map)
@@ -318,6 +343,18 @@ async def proxy_request(
                 owned = False  # generator's finally now owns the release
                 return StreamingResponse(
                     content=generate_chunks(),
+                    status_code=response.status_code,
+                    headers=response_headers,
+                    media_type=response.headers.get("Content-Type", ""),
+                )
+            elif bad_request_body is not None:
+                # aread() already decoded any Content-Encoding, so the headers must not
+                # keep claiming the body is still encoded.
+                response_headers.pop("content-encoding", None)
+                response_headers.pop("content-length", None)
+                await response.aclose()
+                return Response(
+                    content=bad_request_body,
                     status_code=response.status_code,
                     headers=response_headers,
                     media_type=response.headers.get("Content-Type", ""),
