@@ -53,6 +53,19 @@ def _pool_load(model: str, loads: dict[str, int]) -> int:
     return sum(loads.get(s, 0) for s in config.MODELS.get(model, []))
 
 
+# Module-level aliases so tests can patch the sleeper/clock for the gate below
+# without patching the stdlib modules globally (httpx/anyio internals included).
+_sleep = asyncio.sleep
+_monotonic = time.monotonic
+
+
+def _reject_overloaded(model_name: str, pool_load: int) -> JSONResponse:
+    logger.warning(
+        f"Free-tier request to '{model_name}' rejected at hard load (pool load={pool_load} >= {config.FREE_HARD_LOAD})"
+    )
+    return model_overloaded_response(model_name)
+
+
 async def _free_tier_gate(
     model: str,
     model_name: str,
@@ -67,17 +80,30 @@ async def _free_tier_gate(
     below the soft threshold proceed immediately; between soft and hard they
     wait (bounded) for the pool to drain; at the hard threshold they are
     rejected with the OpenAI-shaped 503 openai-node actually displays.
+
+    The cap is advisory, not strict: the request's own inflight lease is only
+    acquired in the forwarding loop below, so N concurrent free arrivals just
+    under the hard threshold all pass at once, and replicas gate independently.
+    Bounded overshoot is expected for a tunable heuristic.
     """
     if api_key is None or keys_manager.tier(api_key) != "free":
         return loads, None
 
-    if _pool_load(model, loads) >= config.FREE_HARD_LOAD:
-        return loads, model_overloaded_response(model_name)
+    pool_load = _pool_load(model, loads)
+    if pool_load >= config.FREE_HARD_LOAD:
+        return loads, _reject_overloaded(model_name, pool_load)
 
-    deadline = time.monotonic() + FREE_GATE_MAX_WAIT
-    while _pool_load(model, loads) >= config.FREE_SOFT_LOAD and time.monotonic() < deadline:
-        await asyncio.sleep(FREE_GATE_POLL_INTERVAL)
+    deadline = _monotonic() + FREE_GATE_MAX_WAIT
+    waited = False
+    while _pool_load(model, loads) >= config.FREE_SOFT_LOAD and _monotonic() < deadline:
+        if not waited:
+            logger.info(f"Free-tier request to '{model_name}' waiting for pool drain under soft load")
+            waited = True
+        await _sleep(FREE_GATE_POLL_INTERVAL)
         loads = await get_all_loads()
+        pool_load = _pool_load(model, loads)
+        if pool_load >= config.FREE_HARD_LOAD:
+            return loads, _reject_overloaded(model_name, pool_load)
     return loads, None
 
 

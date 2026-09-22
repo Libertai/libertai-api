@@ -301,7 +301,7 @@ def test_free_key_under_soft_load_waits_then_proceeds(monkeypatch):
     async def _no_sleep(seconds):
         waits.append(seconds)
 
-    monkeypatch.setattr(proxy.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(proxy, "_sleep", _no_sleep)
 
     resp = _post_with_key("free")
 
@@ -310,20 +310,54 @@ def test_free_key_under_soft_load_waits_then_proceeds(monkeypatch):
     assert len(sends) == 1
 
 
-def test_free_key_waits_bounded_then_proceeds(monkeypatch):
-    # Soft load is a wait, not a wall: when the pool stays above the soft
-    # threshold past the max wait, the free key proceeds anyway.
-    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
-    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
-    monkeypatch.setattr(proxy, "FREE_GATE_MAX_WAIT", 0.0)
-    _stub_forwarding(monkeypatch, [{"http://up": 30}])
+def test_free_key_waits_up_to_max_wait_then_proceeds(monkeypatch):
+    # Soft load is a wait, not a wall: while the pool stays above the soft
+    # threshold the free key polls until the max wait elapses, then proceeds
+    # anyway into the (still-loaded) pool.
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 30}])
     KeysManager().keys = {"free"}
     KeysManager().tiers = {"free": "free"}
+
+    waits: list[float] = []
+    clock = [0.0]
+
+    async def _no_sleep(seconds):
+        waits.append(seconds)
+
+    def _fake_monotonic():
+        clock[0] += proxy.FREE_GATE_POLL_INTERVAL
+        return clock[0]
+
+    monkeypatch.setattr(proxy, "_sleep", _no_sleep)
+    monkeypatch.setattr(proxy, "_monotonic", _fake_monotonic)
 
     resp = _post_with_key("free")
 
     assert resp.status_code == 503
-    assert resp.json()["detail"] == "All servers unavailable for model m"
+    assert len(sends) == 1
+    assert len(waits) > 0
+    assert clock[0] >= proxy.FREE_GATE_MAX_WAIT
+
+
+def test_free_key_rejected_at_hard_load_mid_wait(monkeypatch):
+    # If load crosses the hard threshold while the request waits in the soft
+    # loop, the mid-wait re-check sheds it instead of admitting it.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 30}, {"http://up": 60}])
+    KeysManager().keys = {"free"}
+    KeysManager().tiers = {"free": "free"}
+
+    async def _no_sleep(seconds):
+        pass
+
+    monkeypatch.setattr(proxy, "_sleep", _no_sleep)
+
+    resp = _post_with_key("free")
+
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "model_overloaded"
+    assert sends == []
 
 
 def test_unknown_tier_key_bypasses_the_gate(monkeypatch):

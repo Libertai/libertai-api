@@ -6,9 +6,9 @@ from dotenv import load_dotenv
 
 
 def _int_env(name: str, default: int) -> int:
-    """Read an integer env var; fall back to the default on missing or malformed values."""
+    """Read an integer env var; treat missing/blank/malformed values as the default."""
     raw = os.getenv(name)
-    if raw is None:
+    if raw is None or not raw.strip():
         return default
     try:
         return int(raw)
