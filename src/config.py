@@ -64,14 +64,14 @@ class _Config:
         # threshold they are rejected outright. Paid tiers bypass the gate.
         # Defaults are sized for a pool of ~2 boxes at ~25 concurrent
         # generations each, meant to be tuned via env against real load data;
-        # setting the hard load very high effectively disables the gate.
+        # raise both thresholds to disable the gate (a high hard threshold alone
+        # only removes the rejection — the soft wait still applies).
         self.FREE_SOFT_LOAD = _int_env("FREE_SOFT_LOAD", 25)
         self.FREE_HARD_LOAD = _int_env("FREE_HARD_LOAD", 50)
-        # Still fails safe (SOFT > HARD just disables the wait phase), but an
-        # operator who fat-fingers the values should hear about it. Same for a
-        # non-positive value: HARD <= 0 rejects every free request, SOFT = 0
-        # forces the wait even on an idle pool.
-        if self.FREE_SOFT_LOAD > self.FREE_HARD_LOAD or self.FREE_HARD_LOAD <= 0:
+        # Fails safe either way, but an operator who fat-fingers the values should
+        # hear about it: SOFT > HARD disables the wait phase, HARD <= 0 rejects
+        # every free request, and SOFT <= 0 forces the wait even on an idle pool.
+        if not (0 < self.FREE_SOFT_LOAD <= self.FREE_HARD_LOAD):
             logging.getLogger(__name__).warning(
                 f"FREE_SOFT_LOAD ({self.FREE_SOFT_LOAD}) / FREE_HARD_LOAD ({self.FREE_HARD_LOAD}): "
                 f"expected 0 < SOFT <= HARD; the gate is misconfigured"

@@ -27,7 +27,7 @@ async def close_http_client() -> None:
     await client.aclose()
 
 
-async def get_active_keys() -> tuple[set, dict, dict] | None:
+async def get_active_keys() -> tuple[set, dict, dict[str, str]] | None:
     try:
         response = await client.get(
             f"{config.BACKEND_API_URL}/api-keys/admin/list",
@@ -50,7 +50,7 @@ async def get_active_keys() -> tuple[set, dict, dict] | None:
         return None
 
 
-def parse_snapshot(raw: str) -> tuple[set[str], dict[str, dict], dict[str, dict]]:
+def parse_snapshot(raw: str) -> tuple[set[str], dict[str, dict], dict[str, str]]:
     """Accepts all snapshot shapes: dict (with or without tiers), plus the
     legacy JSON list a previous-release leader may still write during a
     rolling deploy."""
