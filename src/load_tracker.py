@@ -19,15 +19,9 @@ def _key(server: str) -> str:
     return k("inflight", server)
 
 
-def _all_servers() -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for urls in config.MODELS.values():
-        for u in urls:
-            if u not in seen:
-                seen.add(u)
-                out.append(u)
-    return out
+def _dedup(urls: list[str]) -> list[str]:
+    """Order-preserving dedup."""
+    return list(dict.fromkeys(urls))
 
 
 def _prune_and_count(entries: dict[str, str], now: float) -> tuple[int, list[str]]:
@@ -47,8 +41,7 @@ def _prune_and_count(entries: dict[str, str], now: float) -> tuple[int, list[str
     return live, expired
 
 
-async def get_all_loads() -> dict[str, int]:
-    servers = _all_servers()
+async def _loads_for_servers(servers: list[str]) -> dict[str, int]:
     if not servers:
         return {}
     now = time.time()
@@ -76,6 +69,13 @@ async def get_all_loads() -> dict[str, int]:
     except Exception as e:
         logger.error(f"Failed to read inflight loads from Redis: {e}", exc_info=True)
         return {}
+
+
+async def get_model_loads(model: str) -> dict[str, int]:
+    """Inflight counts for just the model's servers — the proxy reads this per
+    request, so it must not HGETALL every configured server of every model.
+    An unknown model returns {} (the gate fail-opens)."""
+    return await _loads_for_servers(_dedup(config.MODELS.get(model, [])))
 
 
 async def acquire(server: str, request_id: str) -> None:

@@ -24,7 +24,7 @@ from src.health import server_health_monitor
 from src.image_stripping import IMAGE_STRIP_PATHS, strip_images
 from src.load_tracker import (
     LEASE_REFRESH_INTERVAL,
-    get_all_loads,
+    get_model_loads,
 )
 from src.load_tracker import (
     acquire as load_acquire,
@@ -130,12 +130,10 @@ async def _free_tier_gate(
             logger.info(f"Free-tier request to '{model_name}' waiting for pool drain under soft load")
             waited = True
         await _sleep(FREE_GATE_POLL_INTERVAL)
-        # Each poll HGETALLs every configured server across all models, not just
-        # this model's — acceptable at the current box scale; revisit if wait
-        # volumes grow. Waiters hold no lease, so a draining pool admits the
-        # whole waiting cohort at once; jittered polls or a waiter cap are the
-        # first levers if that pressure shows up.
-        loads = await get_all_loads()
+        # Re-fetch only this model's servers: waiters poll every 0.5s, so the
+        # per-model pipeline keeps the Redis traffic proportional to the pool
+        # being waited on.
+        loads = await get_model_loads(model)
         pool_load = _pool_load(model, loads)
         if pool_load >= config.FREE_HARD_LOAD:
             return loads, _reject_overloaded(model_name, pool_load)
@@ -149,7 +147,7 @@ timeout = httpx.Timeout(
     connect=3.0,  # Connection timeout (fast failover)
     read=600.0,  # Read timeout (10 minutes for long inference)
     write=10.0,  # Write timeout (text prompts only)
-    pool=5.0,  # Pool connection timeout
+    pool=3.0,  # Pool connection timeout (fail fast under saturation instead of queuing)
 )
 limits = httpx.Limits(
     max_connections=500,  # Max total concurrent connections
@@ -318,8 +316,9 @@ async def proxy_request(
             detail=f"No server configured for model {model_name}",
         )
 
-    # Snapshot inflight request counts from Redis once for sorting
-    loads = await get_all_loads()
+    # Snapshot inflight request counts from Redis once for sorting (per-model:
+    # only this model's servers are read, not every model's)
+    loads = await get_model_loads(model)
 
     # Free-tier admission control: wait (bounded) under soft load, reject at hard
     # load. Paid tiers and unknown keys bypass; the possibly-refreshed snapshot
