@@ -52,7 +52,9 @@ class _BodySizeLimitMiddleware:
     is a memory-exhaustion vector on a public API. A parseable content-length
     is checked from the scope (cheap on the hot path); bodies without one
     (chunked / HTTP-2 framing) are drained with the same cap and replayed to
-    the app, so neither path can be buffered unboundedly.
+    the app, so neither path can be buffered unboundedly. The drain runs on
+    every content-length-less request — including unauthenticated ones — so
+    the cap, not auth, is what bounds pre-auth memory per connection.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -66,22 +68,20 @@ class _BodySizeLimitMiddleware:
             max_bytes = max_mb * 1024 * 1024
             content_length = _content_length_int(Headers(scope=scope).get("content-length") or "")
             if content_length is not None and content_length > max_bytes:
-                await self._reject(scope, receive, send, max_mb, True)
+                await body_too_large_response(max_mb)(scope, receive, send)
                 return
             if content_length is None:
                 chunks, over_cap = await self._drain(receive, max_bytes)
                 if chunks is None:
-                    await self._reject(scope, receive, send, max_mb, over_cap)
+                    # A mid-drain disconnect goes nowhere, but its response
+                    # should not say the body was too large.
+                    if over_cap:
+                        await body_too_large_response(max_mb)(scope, receive, send)
+                    else:
+                        await client_disconnected_response()(scope, receive, send)
                     return
                 receive = _replay_receive(chunks, receive)
         await self.app(scope, receive, send)
-
-    async def _reject(self, scope: Scope, receive: Receive, send: Send, max_mb: int, over_cap: bool) -> None:
-        if over_cap:
-            response = body_too_large_response(max_mb)
-        else:
-            response = client_disconnected_response()
-        await response(scope, receive, send)
 
     async def _drain(self, receive: Receive, max_bytes: int) -> tuple[list[bytes] | None, bool]:
         """Read the body up to the cap.

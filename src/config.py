@@ -69,10 +69,6 @@ class _Config:
         # only removes the rejection — the soft wait still applies).
         self.FREE_SOFT_LOAD = _int_env("FREE_SOFT_LOAD", 25)
         self.FREE_HARD_LOAD = _int_env("FREE_HARD_LOAD", 50)
-        # Request body size cap (src/server.py middleware): the proxy buffers the
-        # entire body in memory, so an uncapped upload is a memory-exhaustion
-        # vector. 0 or negative disables the cap.
-        self.MAX_BODY_SIZE_MB = _int_env("MAX_BODY_SIZE_MB", 100)
         # Fails safe either way, but an operator who fat-fingers the values should
         # hear about it: SOFT > HARD disables the wait phase, HARD <= 0 rejects
         # every free request, and SOFT <= 0 forces the wait even on an idle pool.
@@ -81,6 +77,10 @@ class _Config:
                 f"FREE_SOFT_LOAD ({self.FREE_SOFT_LOAD}) / FREE_HARD_LOAD ({self.FREE_HARD_LOAD}): "
                 f"expected 0 < SOFT <= HARD; the gate is misconfigured"
             )
+        # Request body size cap (src/server.py middleware): the proxy buffers the
+        # entire body in memory, so an uncapped upload is a memory-exhaustion
+        # vector. 0 or negative disables the cap.
+        self.MAX_BODY_SIZE_MB = _int_env("MAX_BODY_SIZE_MB", 100)
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
