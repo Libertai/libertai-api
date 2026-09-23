@@ -11,7 +11,8 @@ from src.ssl_trust import SSL_CONTEXT
 
 logger = setup_logger(__name__)
 
-# Snapshot shape: {"keys": [...], "invalid_keys": {key: {"reason", "message"}}}
+# Snapshot shape: {"keys": [...], "invalid_keys": {key: {"reason", "message"}},
+# "tiers": {key: tier}}
 REDIS_KEY = k("api_keys")
 # Transitional key from the list→dict shape migration; deleted on each refresh so no
 # stale copy lingers. Constant + delete can go once no deployment has ever written it.
@@ -26,7 +27,7 @@ async def close_http_client() -> None:
     await client.aclose()
 
 
-async def get_active_keys() -> tuple[set, dict] | None:
+async def get_active_keys() -> tuple[set[str], dict[str, dict], dict[str, str]] | None:
     try:
         response = await client.get(
             f"{config.BACKEND_API_URL}/api-keys/admin/list",
@@ -37,7 +38,11 @@ async def get_active_keys() -> tuple[set, dict] | None:
             data = response.json()
             # invalid_keys entries ({reason, message}) are trusted server-side data,
             # stored/served as-is; consumers read them with .get() fallbacks.
-            return set(data.get("keys") or []), dict(data.get("invalid_keys") or {})
+            return (
+                set(data.get("keys") or []),
+                dict(data.get("invalid_keys") or {}),
+                dict(data.get("tiers") or {}),
+            )
         logger.error(f"Error fetching accounts: {response.status_code}")
         return None
     except Exception as e:
@@ -45,13 +50,18 @@ async def get_active_keys() -> tuple[set, dict] | None:
         return None
 
 
-def parse_snapshot(raw: str) -> tuple[set[str], dict[str, dict]]:
-    """Accepts both snapshot shapes: dict, plus the legacy JSON list a
-    previous-release leader may still write during a rolling deploy."""
+def parse_snapshot(raw: str) -> tuple[set[str], dict[str, dict], dict[str, str]]:
+    """Accepts all snapshot shapes: dict (with or without tiers), plus the
+    legacy JSON list a previous-release leader may still write during a
+    rolling deploy."""
     data = json.loads(raw)
     if isinstance(data, dict):
-        return set(data.get("keys") or []), dict(data.get("invalid_keys") or {})
-    return set(data), {}
+        return (
+            set(data.get("keys") or []),
+            dict(data.get("invalid_keys") or {}),
+            dict(data.get("tiers") or {}),
+        )
+    return set(data), {}, {}
 
 
 class KeysManager:
@@ -59,6 +69,11 @@ class KeysManager:
     keys: ClassVar[set[str]] = set()
     # key -> {"reason": str, "message": str} for real-but-unusable keys (limits/credits/disabled)
     invalid_keys: ClassVar[dict[str, dict]] = {}
+    # key -> tier ("free", "go", "plus", ...). Metadata only — the gate in proxy.py
+    # treats anything other than an explicit "free" (compared case-insensitively;
+    # paid tier or missing entry) as ungated, so sync skew fails open rather than
+    # over-sheds.
+    tiers: ClassVar[dict[str, str]] = {}
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -71,19 +86,23 @@ class KeysManager:
     def key_invalid_info(self, key: str) -> dict | None:
         return self.invalid_keys.get(key)
 
+    def tier(self, key: str) -> str | None:
+        return self.tiers.get(key)
+
     async def refresh_keys(self):
         """Leader-only: fetch authoritative keys and publish to Redis."""
         fetched = await get_active_keys()
         if fetched is not None:
-            new_keys, new_invalid = fetched
+            new_keys, new_invalid, new_tiers = fetched
             self.keys = new_keys
             self.invalid_keys = new_invalid
+            self.tiers = new_tiers
             try:
                 redis = get_redis()
                 async with redis.pipeline(transaction=True) as pipe:
                     pipe.set(
                         REDIS_KEY,
-                        json.dumps({"keys": sorted(new_keys), "invalid_keys": new_invalid}),
+                        json.dumps({"keys": sorted(new_keys), "invalid_keys": new_invalid, "tiers": new_tiers}),
                     )
                     pipe.delete(REDIS_KEY_V2)
                     await pipe.execute()
@@ -102,7 +121,7 @@ class KeysManager:
             raw = await get_redis().get(REDIS_KEY)
             if raw is None:
                 return
-            self.keys, self.invalid_keys = parse_snapshot(raw)
+            self.keys, self.invalid_keys, self.tiers = parse_snapshot(raw)
         except Exception as e:
             logger.error(f"Failed to sync keys from Redis: {e}", exc_info=True)
 
@@ -121,6 +140,7 @@ async def distribute_keys_to_clients():
 
     try:
         # Old boxes read only "keys" from the decrypted payload; extra fields are ignored.
+        # tiers are deliberately proxy-only: boxes authenticate on keys/invalid_keys alone.
         signed_payload = create_signed_payload(
             {"keys": keys_list, "invalid_keys": keys_manager.invalid_keys}, config.PRIVATE_KEY
         )

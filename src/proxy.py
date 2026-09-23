@@ -7,14 +7,19 @@ from http import HTTPStatus
 
 import httpx
 from fastapi import APIRouter, Cookie, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from src.aleph import aleph_service
 from src.api_keys import KeysManager
 from src.auth import extract_api_key
 from src.config import config
-from src.errors import invalid_key_response
+from src.constants import (
+    FREE_GATE_MAX_WAIT,
+    FREE_GATE_POLL_INTERVAL,
+    FREE_REJECT_LOG_INTERVAL,
+)
+from src.errors import invalid_key_response, model_overloaded_response
 from src.health import server_health_monitor
 from src.image_stripping import IMAGE_STRIP_PATHS, strip_images
 from src.load_tracker import (
@@ -42,6 +47,99 @@ _CONTEXT_LENGTH_MARKER = "maximum context length"
 def _is_context_length_error(body: bytes) -> bool:
     """True when a 400 body says the prompt exceeds the server's context window."""
     return _CONTEXT_LENGTH_MARKER in body.decode("utf-8", "replace").lower()
+
+
+def _pool_load(model: str, loads: dict[str, int]) -> int:
+    """Aggregate inflight requests across the model's configured servers."""
+    return sum(loads.get(s, 0) for s in set(config.MODELS.get(model, [])))
+
+
+# Module-level aliases so tests can patch the sleeper/clock for the gate below
+# without patching the stdlib modules globally (httpx/anyio internals included).
+_sleep = asyncio.sleep
+_monotonic = time.monotonic
+
+# Throttle state for _log_rejection: last log time + rejections suppressed since.
+_reject_log_state = {"last": 0.0, "suppressed": 0}
+
+
+def _log_rejection(model_name: str, pool_load: int) -> None:
+    """Warning-log a hard-load rejection at most once per interval.
+
+    Shedding is expected behavior under load, so a burst would otherwise produce
+    one warning line per request; suppressed rejections are counted into the
+    next line.
+    """
+    state = _reject_log_state
+    now = _monotonic()
+    if now - state["last"] < FREE_REJECT_LOG_INTERVAL:
+        state["suppressed"] += 1
+        return
+    suppressed = state["suppressed"]
+    state["suppressed"] = 0
+    state["last"] = now
+    more = f" (+{suppressed} more since last log)" if suppressed else ""
+    logger.warning(
+        f"Free-tier request to '{model_name}' rejected at hard load "
+        f"(pool load={pool_load} >= {config.FREE_HARD_LOAD}){more}"
+    )
+
+
+def _reject_overloaded(model_name: str, pool_load: int) -> JSONResponse:
+    _log_rejection(model_name, pool_load)
+    return model_overloaded_response(model_name)
+
+
+async def _free_tier_gate(
+    model: str,
+    model_name: str,
+    api_key: str | None,
+    loads: dict[str, int],
+) -> tuple[dict[str, int], JSONResponse | None]:
+    """Admission control for free-tier keys.
+
+    Returns the (possibly refreshed) loads snapshot plus an optional hard-load
+    rejection response. Paid tiers bypass the gate entirely; unknown keys
+    (sync skew, missing tier entry) fail open rather than over-shed. Free keys
+    below the soft threshold proceed immediately; between soft and hard they
+    wait (bounded) for the pool to drain; at the hard threshold they are
+    rejected with the OpenAI-shaped 503 openai-node actually displays.
+
+    The cap is advisory, not strict: the request's own inflight lease is only
+    acquired in the forwarding loop below, so N concurrent free arrivals just
+    under the hard threshold all pass at once, and replicas gate independently.
+    Bounded overshoot is expected for a tunable heuristic.
+    """
+    # Membership gating: tiers is metadata only, so a key outside the valid set
+    # (possible only with inconsistent backend data) fails open like any other
+    # unknown. The tier comparison is normalized because the gate hinges on it:
+    # casing drift ("Free") must not silently fail every free-tier key open.
+    if api_key is None or not keys_manager.key_exists(api_key):
+        return loads, None
+    if (keys_manager.tier(api_key) or "").lower() != "free":
+        return loads, None
+
+    pool_load = _pool_load(model, loads)
+    if pool_load >= config.FREE_HARD_LOAD:
+        return loads, _reject_overloaded(model_name, pool_load)
+
+    deadline = _monotonic() + FREE_GATE_MAX_WAIT
+    waited = False
+    while pool_load >= config.FREE_SOFT_LOAD and _monotonic() < deadline:
+        if not waited:
+            logger.info(f"Free-tier request to '{model_name}' waiting for pool drain under soft load")
+            waited = True
+        await _sleep(FREE_GATE_POLL_INTERVAL)
+        # Each poll HGETALLs every configured server across all models, not just
+        # this model's — acceptable at the current box scale; revisit if wait
+        # volumes grow. Waiters hold no lease, so a draining pool admits the
+        # whole waiting cohort at once; jittered polls or a waiter cap are the
+        # first levers if that pressure shows up.
+        loads = await get_all_loads()
+        pool_load = _pool_load(model, loads)
+        if pool_load >= config.FREE_HARD_LOAD:
+            return loads, _reject_overloaded(model_name, pool_load)
+    return loads, None
 
 
 keys_manager = KeysManager()
@@ -222,6 +320,13 @@ async def proxy_request(
 
     # Snapshot inflight request counts from Redis once for sorting
     loads = await get_all_loads()
+
+    # Free-tier admission control: wait (bounded) under soft load, reject at hard
+    # load. Paid tiers and unknown keys bypass; the possibly-refreshed snapshot
+    # keeps the sorting below accurate.
+    loads, gate_response = await _free_tier_gate(model, model_name, api_key, loads)
+    if gate_response is not None:
+        return gate_response
 
     # Tiered ordering: healthy > capable > unknown. Sort BY LOAD within each tier, not
     # across tiers — otherwise a known-bad server with zero inflight load gets tried
