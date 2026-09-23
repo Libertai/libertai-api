@@ -14,9 +14,10 @@ ALEPH_API_URL = (
 
 REDIS_KEY = k("aleph", "snapshot")
 
-# Aleph sits behind no proxy; a module-level client reuses connections across
-# refresh cycles instead of paying a fresh TCP+TLS handshake every 30s.
-client = httpx.AsyncClient(timeout=30.0)
+# Aleph sits behind no proxy; a module-level client reuses connections instead
+# of paying a fresh TCP+TLS handshake per fetch. keepalive_expiry outlasts the
+# 300s cache TTL so a connection survives between refresh fetches.
+client = httpx.AsyncClient(timeout=30.0, limits=httpx.Limits(keepalive_expiry=310.0))
 
 
 async def close_http_client() -> None:

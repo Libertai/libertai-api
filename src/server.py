@@ -46,11 +46,13 @@ logger = setup_logger(__name__)
 
 
 class _BodySizeLimitMiddleware:
-    """Reject oversized request bodies before the body is ever read.
+    """Reject oversized request bodies before the app buffers them.
 
     The proxy buffers the entire request body in memory, so an uncapped upload
-    is a memory-exhaustion vector on a public API. Reads only the
-    content-length header from the scope, so it stays cheap on the hot path.
+    is a memory-exhaustion vector on a public API. A parseable content-length
+    is checked from the scope (cheap on the hot path); bodies without one
+    (chunked / HTTP-2 framing) are drained with the same cap and replayed to
+    the app, so neither path can be buffered unboundedly.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -58,13 +60,61 @@ class _BodySizeLimitMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and config.MAX_BODY_SIZE_MB > 0:
-            content_length = Headers(scope=scope).get("content-length")
             max_bytes = config.MAX_BODY_SIZE_MB * 1024 * 1024
-            if content_length and content_length.isdigit() and int(content_length) > max_bytes:
-                response = body_too_large_response(config.MAX_BODY_SIZE_MB)
-                await response(scope, receive, send)
+            content_length = _content_length_int(Headers(scope=scope).get("content-length") or "")
+            if content_length is not None and content_length > max_bytes:
+                await self._reject(scope, receive, send)
                 return
+            if content_length is None:
+                chunks = await self._drain(receive, max_bytes)
+                if chunks is None:
+                    await self._reject(scope, receive, send)
+                    return
+                receive = _replay_receive(chunks)
         await self.app(scope, receive, send)
+
+    async def _reject(self, scope: Scope, receive: Receive, send: Send) -> None:
+        response = body_too_large_response(config.MAX_BODY_SIZE_MB)
+        await response(scope, receive, send)
+
+    async def _drain(self, receive: Receive, max_bytes: int) -> list[bytes] | None:
+        """Read the body up to the cap; None when the cap is exceeded or the
+        client disconnects mid-read (forwarding a truncated body would be worse)."""
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return None
+            body = message.get("body", b"")
+            total += len(body)
+            if total > max_bytes:
+                return None
+            chunks.append(body)
+            if not message.get("more_body"):
+                return chunks
+
+
+def _content_length_int(raw: str) -> int | None:
+    """ASCII-digits-only parse: isdigit() also accepts Unicode digits that int() rejects."""
+    if not raw.isascii() or not raw.isdigit():
+        return None
+    return int(raw)
+
+
+def _replay_receive(chunks: list[bytes]) -> Receive:
+    """Return a receive that yields the drained chunks back so the app reads
+    the body it would have read without the middleware."""
+    state = {"index": 0}
+
+    async def receive() -> dict:
+        if state["index"] < len(chunks):
+            chunk = chunks[state["index"]]
+            state["index"] += 1
+            return {"type": "http.request", "body": chunk, "more_body": state["index"] < len(chunks)}
+        return {"type": "http.disconnect"}
+
+    return receive
 
 
 # Set to True after first successful job cycle

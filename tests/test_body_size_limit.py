@@ -11,21 +11,31 @@ def _scope(content_length: int | None) -> dict:
     return {"type": "http", "headers": headers}
 
 
-def _run_middleware(scope, monkeypatch, max_mb: int | None):
-    """Run the middleware against a downstream app that records whether it was
-    reached, and return (reached, sent_messages)."""
+def _run_middleware(scope, monkeypatch, max_mb: int | None, receive_messages=None):
+    """Run the middleware against a downstream app that reads its body through
+    receive and records it, and return (reached_bodies, sent_messages)."""
     monkeypatch.setattr(server.config, "MAX_BODY_SIZE_MB", max_mb if max_mb is not None else 100)
-    reached: list[dict] = []
+    reached: list[bytes] = []
     sent: list[dict] = []
 
     async def app(scope, receive, send):
-        reached.append(scope)
+        body = b""
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                break
+            body += message.get("body", b"")
+            if not message.get("more_body"):
+                break
+        reached.append(body)
 
     async def send(message):
         sent.append(message)
 
     async def receive():
-        return {"type": "http.request"}
+        if receive_messages:
+            return receive_messages.pop(0)
+        return {"type": "http.disconnect"}
 
     mw = _BodySizeLimitMiddleware(app)
     asyncio.run(mw(scope, receive, send))
@@ -47,16 +57,57 @@ def test_boundary_body_passes_through(monkeypatch):
     # The limit is strict >: a body of exactly the cap is accepted.
     reached, sent = _run_middleware(_scope(100 * 1024 * 1024), monkeypatch, None)
 
-    assert len(reached) == 1
+    assert reached == [b""]
     assert sent == []
 
 
-def test_body_without_content_length_passes_through(monkeypatch):
-    # Chunked uploads carry no content-length; the middleware must not reject
-    # them (bounded memory is the uvicorn-side concern, not this guard's).
-    reached, sent = _run_middleware(_scope(None), monkeypatch, None)
+def test_chunked_body_under_cap_is_drained_and_replayed(monkeypatch):
+    # Chunked uploads carry no content-length: the middleware drains them with
+    # the same cap and replays the chunks so the app reads the same body it
+    # would have read without the middleware.
+    messages = [
+        {"type": "http.request", "body": b"chunk1", "more_body": True},
+        {"type": "http.request", "body": b"chunk2", "more_body": False},
+    ]
+    reached, sent = _run_middleware(_scope(None), monkeypatch, None, messages)
 
-    assert len(reached) == 1
+    assert reached == [b"chunk1chunk2"]
+    assert sent == []
+
+
+def test_chunked_body_over_cap_rejected(monkeypatch):
+    # The same attacker can bypass the content-length check with chunked
+    # framing, so the drain must cap those bodies too.
+    messages = [
+        {"type": "http.request", "body": b"x" * (60 * 1024 * 1024), "more_body": True},
+        {"type": "http.request", "body": b"y" * (60 * 1024 * 1024), "more_body": False},
+    ]
+    reached, sent = _run_middleware(_scope(None), monkeypatch, None, messages)
+
+    assert reached == []
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    assert start["status"] == 413
+
+
+def test_chunked_client_disconnect_rejected(monkeypatch):
+    # A client disconnecting mid-drain also rejects: forwarding a truncated
+    # body would be worse.
+    messages = [{"type": "http.disconnect"}]
+    reached, sent = _run_middleware(_scope(None), monkeypatch, None, messages)
+
+    assert reached == []
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    assert start["status"] == 413
+
+
+def test_unicode_digit_content_length_is_drained_not_500(monkeypatch):
+    # isdigit() also accepts Unicode digits that int() rejects ('¹'); the
+    # ASCII-digits-only parse falls back to the drain instead of raising a 500.
+    scope = {"type": "http", "headers": [(b"content-length", "¹".encode())]}
+    messages = [{"type": "http.request", "body": b"ok", "more_body": False}]
+    reached, sent = _run_middleware(scope, monkeypatch, None, messages)
+
+    assert reached == [b"ok"]
     assert sent == []
 
 
