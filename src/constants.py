@@ -8,3 +8,6 @@ JOB_INTERVAL_SECONDS = 30
 # inflight loads. The thresholds themselves are env-configurable in config.py.
 FREE_GATE_MAX_WAIT = 5.0
 FREE_GATE_POLL_INTERVAL = 0.5
+# Hard-load rejections are expected shedding under load, so their warning is
+# throttled: at most one line per interval, carrying the suppressed count.
+FREE_REJECT_LOG_INTERVAL = 30.0
