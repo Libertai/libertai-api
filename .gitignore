@@ -167,3 +167,6 @@ cython_debug/
 .claude
 
 docs
+
+# uv byproduct — the project resolves dependencies with Poetry
+uv.lock

@@ -7,8 +7,9 @@ from src.config import _Config
 
 @pytest.fixture
 def _capture_config_logs(monkeypatch, caplog):
-    """setup_logger sets propagate=False, so src.config records only reach
-    caplog depending on the pytest version — force propagation and level."""
+    """src.config logs via logging.getLogger(__name__) with propagation on, but
+    if it ever switched to setup_logger (propagate=False) caplog capture would
+    depend on the pytest version — force propagation and level regardless."""
     monkeypatch.setattr(logging.getLogger("src.config"), "propagate", True)
     with caplog.at_level(logging.WARNING, logger="src.config"):
         yield caplog
