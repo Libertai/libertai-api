@@ -36,6 +36,7 @@ class _Config:
     SEARCH_SERVICE_URL: str
     FREE_SOFT_LOAD: int
     FREE_HARD_LOAD: int
+    MAX_BODY_SIZE_MB: int
 
     LOG_LEVEL: int
 
@@ -76,6 +77,10 @@ class _Config:
                 f"FREE_SOFT_LOAD ({self.FREE_SOFT_LOAD}) / FREE_HARD_LOAD ({self.FREE_HARD_LOAD}): "
                 f"expected 0 < SOFT <= HARD; the gate is misconfigured"
             )
+        # Request body size cap (src/server.py middleware): the proxy buffers the
+        # entire body in memory, so an uncapped upload is a memory-exhaustion
+        # vector. 0 or negative disables the cap.
+        self.MAX_BODY_SIZE_MB = _int_env("MAX_BODY_SIZE_MB", 100)
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")

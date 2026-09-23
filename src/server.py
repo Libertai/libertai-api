@@ -11,14 +11,19 @@ except ImportError:
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from starlette.datastructures import Headers
 from starlette.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.aleph import aleph_service
+from src.aleph import close_http_client as close_aleph_http_client
 from src.aleph_credits import router as aleph_credits_router
 from src.api_keys import KeysManager
 from src.api_keys import close_http_client as close_keys_http_client
 from src.auth import router as auth_router
+from src.config import config
 from src.constants import JOB_INTERVAL_SECONDS
+from src.errors import body_too_large_response, client_disconnected_response
 from src.health import close_http_client as close_health_http_client
 from src.health import server_health_monitor
 from src.leader import leader
@@ -29,6 +34,7 @@ from src.proxy import router as proxy_router
 from src.redis_client import close_redis
 from src.search import close_http_client as close_search_http_client
 from src.search import router as search_router
+from src.x402 import close_http_client as close_x402_http_client
 from src.x402 import x402_manager
 
 # The Telegram bot now runs as its own dokploy service (replicas: 1, entrypoint
@@ -37,6 +43,99 @@ from src.x402 import x402_manager
 
 keys_manager = KeysManager()
 logger = setup_logger(__name__)
+
+
+class _BodySizeLimitMiddleware:
+    """Reject oversized request bodies before the app buffers them.
+
+    The proxy buffers the entire request body in memory, so an uncapped upload
+    is a memory-exhaustion vector on a public API. A parseable content-length
+    is checked from the scope (cheap on the hot path); bodies without one
+    (chunked / HTTP-2 framing) are drained with the same cap and replayed to
+    the app, so neither path can be buffered unboundedly. The drain runs on
+    every content-length-less request — including unauthenticated ones — so
+    the cap, not auth, is what bounds pre-auth memory per connection.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Read the cap once: rejecting at one cap and reporting another would be
+        # inconsistent if it changed mid-request. 0 or negative disables the cap.
+        max_mb = config.MAX_BODY_SIZE_MB if scope["type"] == "http" else 0
+        if max_mb > 0:
+            max_bytes = max_mb * 1024 * 1024
+            content_length = _content_length_int(Headers(scope=scope).get("content-length") or "")
+            if content_length is not None and content_length > max_bytes:
+                await body_too_large_response(max_mb)(scope, receive, send)
+                return
+            if content_length is None:
+                chunks, over_cap = await self._drain(receive, max_bytes)
+                if chunks is None:
+                    # A mid-drain disconnect goes nowhere, but its response
+                    # should not say the body was too large.
+                    if over_cap:
+                        await body_too_large_response(max_mb)(scope, receive, send)
+                    else:
+                        await client_disconnected_response()(scope, receive, send)
+                    return
+                receive = _replay_receive(chunks, receive)
+        await self.app(scope, receive, send)
+
+    async def _drain(self, receive: Receive, max_bytes: int) -> tuple[list[bytes] | None, bool]:
+        """Read the body up to the cap.
+
+        Returns (chunks, over_cap): over_cap True when the cap is exceeded;
+        (None, False) on a mid-drain client disconnect — forwarding a truncated
+        body would be worse.
+        """
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return None, False
+            body = message.get("body", b"")
+            total += len(body)
+            if total > max_bytes:
+                return None, True
+            chunks.append(body)
+            if not message.get("more_body"):
+                return chunks, False
+
+
+def _content_length_int(raw: str) -> int | None:
+    """ASCII-digits-only parse: isdigit() also accepts Unicode digits that int()
+    rejects, and 4301+ digits trip Python's int-str-conversion limit — both
+    fall back to the capped drain instead of raising."""
+    if not raw.isascii() or not raw.isdigit():
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _replay_receive(chunks: list[bytes], real_receive: Receive) -> Receive:
+    """Return a receive that yields the drained chunks back so the app reads
+    the body it would have read without the middleware.
+
+    After exhaustion it delegates to the original receive: StreamingResponse
+    listens for disconnect concurrently with the stream, so a synthetic
+    disconnect here would cancel the response right after the headers.
+    """
+    state = {"index": 0}
+
+    async def receive():
+        if state["index"] < len(chunks):
+            chunk = chunks[state["index"]]
+            state["index"] += 1
+            return {"type": "http.request", "body": chunk, "more_body": state["index"] < len(chunks)}
+        return await real_receive()
+
+    return receive
+
 
 # Set to True after first successful job cycle
 _ready = False
@@ -99,12 +198,15 @@ async def lifespan(_app: FastAPI):
         await close_search_http_client()
         await close_health_http_client()
         await close_keys_http_client()
+        await close_x402_http_client()
+        await close_aleph_http_client()
         await close_redis()
 
 
 app = FastAPI(title="LibertAI API", lifespan=lifespan)
 
 
+app.add_middleware(_BodySizeLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

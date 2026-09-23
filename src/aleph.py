@@ -14,6 +14,15 @@ ALEPH_API_URL = (
 
 REDIS_KEY = k("aleph", "snapshot")
 
+# Aleph sits behind no proxy; a module-level client reuses connections instead
+# of paying a fresh TCP+TLS handshake per fetch. keepalive_expiry outlasts the
+# 300s cache TTL so a connection survives between refresh fetches.
+client = httpx.AsyncClient(timeout=30.0, limits=httpx.Limits(keepalive_expiry=310.0))
+
+
+async def close_http_client() -> None:
+    await client.aclose()
+
 
 class AlephService:
     def __init__(self):
@@ -34,10 +43,9 @@ class AlephService:
 
         logger.debug("Fetching redirections from Aleph")
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(ALEPH_API_URL)
-                response.raise_for_status()
-                data = response.json()
+            response = await client.get(ALEPH_API_URL)
+            response.raise_for_status()
+            data = response.json()
 
             pricing_data = data.get("data", {}).get("LTAI_PRICING")
             raw_models = pricing_data.get("models") if isinstance(pricing_data, dict) else None
@@ -81,7 +89,9 @@ class AlephService:
             self.vision_models = new_vision
             self.models = new_models
             self.models_loaded = True
-            logger.debug(f"Loaded {len(self.reasoning_models)} reasoning models, {len(self.vision_models)} vision models")
+            logger.debug(
+                f"Loaded {len(self.reasoning_models)} reasoning models, {len(self.vision_models)} vision models"
+            )
 
             self._last_fetch_time = current_time
 
