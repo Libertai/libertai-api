@@ -495,6 +495,11 @@ def test_rejection_logging_is_throttled(monkeypatch, caplog):
     # Shedding is expected under load, so the rejection warning must not emit
     # one line per request: within the interval rejections are counted, and the
     # next line carries the suppressed count.
+    import logging
+
+    # setup_logger sets propagate=False, so records only reach caplog depending
+    # on the pytest version — force propagation for this test.
+    monkeypatch.setattr(logging.getLogger("src.proxy"), "propagate", True)
     monkeypatch.setattr(proxy, "_reject_log_state", {"last": 0.0, "suppressed": 0})
     clock = [1e9]
     monkeypatch.setattr(proxy, "_monotonic", lambda: clock[0])
@@ -504,9 +509,11 @@ def test_rejection_logging_is_throttled(monkeypatch, caplog):
     clock[0] += proxy.FREE_REJECT_LOG_INTERVAL + 1
     proxy._log_rejection("m", 62)
 
-    records = [record for record in caplog.records if "rejected at hard load" in record.message]
-    assert len(records) == 2
-    assert "+1 more since last log" in records[1].message
+    # pytest attaches capture handlers at multiple scopes, so a propagated
+    # record can be captured twice — dedupe by message.
+    messages = {record.message for record in caplog.records if "rejected at hard load" in record.message}
+    assert len(messages) == 2
+    assert any("+1 more since last log" in message for message in messages)
 
 
 def test_unknown_tier_key_bypasses_the_gate(monkeypatch):

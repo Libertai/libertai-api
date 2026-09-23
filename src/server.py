@@ -59,10 +59,10 @@ class _BodySizeLimitMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and config.MAX_BODY_SIZE_MB > 0:
-            # Read the cap once: rejecting at one cap and reporting another
-            # would be inconsistent if it changed mid-request.
-            max_mb = config.MAX_BODY_SIZE_MB
+        # Read the cap once: rejecting at one cap and reporting another would be
+        # inconsistent if it changed mid-request. 0 or negative disables the cap.
+        max_mb = config.MAX_BODY_SIZE_MB if scope["type"] == "http" else 0
+        if max_mb > 0:
             max_bytes = max_mb * 1024 * 1024
             content_length = _content_length_int(Headers(scope=scope).get("content-length") or "")
             if content_length is not None and content_length > max_bytes:
