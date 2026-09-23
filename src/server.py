@@ -11,14 +11,19 @@ except ImportError:
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from starlette.datastructures import Headers
 from starlette.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.aleph import aleph_service
+from src.aleph import close_http_client as close_aleph_http_client
 from src.aleph_credits import router as aleph_credits_router
 from src.api_keys import KeysManager
 from src.api_keys import close_http_client as close_keys_http_client
 from src.auth import router as auth_router
+from src.config import config
 from src.constants import JOB_INTERVAL_SECONDS
+from src.errors import body_too_large_response
 from src.health import close_http_client as close_health_http_client
 from src.health import server_health_monitor
 from src.leader import leader
@@ -29,6 +34,7 @@ from src.proxy import router as proxy_router
 from src.redis_client import close_redis
 from src.search import close_http_client as close_search_http_client
 from src.search import router as search_router
+from src.x402 import close_http_client as close_x402_http_client
 from src.x402 import x402_manager
 
 # The Telegram bot now runs as its own dokploy service (replicas: 1, entrypoint
@@ -37,6 +43,29 @@ from src.x402 import x402_manager
 
 keys_manager = KeysManager()
 logger = setup_logger(__name__)
+
+
+class _BodySizeLimitMiddleware:
+    """Reject oversized request bodies before the body is ever read.
+
+    The proxy buffers the entire request body in memory, so an uncapped upload
+    is a memory-exhaustion vector on a public API. Reads only the
+    content-length header from the scope, so it stays cheap on the hot path.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and config.MAX_BODY_SIZE_MB > 0:
+            content_length = Headers(scope=scope).get("content-length")
+            max_bytes = config.MAX_BODY_SIZE_MB * 1024 * 1024
+            if content_length and content_length.isdigit() and int(content_length) > max_bytes:
+                response = body_too_large_response(config.MAX_BODY_SIZE_MB)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
 
 # Set to True after first successful job cycle
 _ready = False
@@ -99,12 +128,15 @@ async def lifespan(_app: FastAPI):
         await close_search_http_client()
         await close_health_http_client()
         await close_keys_http_client()
+        await close_x402_http_client()
+        await close_aleph_http_client()
         await close_redis()
 
 
 app = FastAPI(title="LibertAI API", lifespan=lifespan)
 
 
+app.add_middleware(_BodySizeLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

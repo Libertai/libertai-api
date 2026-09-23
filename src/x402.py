@@ -21,6 +21,15 @@ USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 
 _enc = tiktoken.get_encoding("cl100k_base")
 
+# Thirdweb and the backend sit behind no proxy; a module-level client reuses
+# connections instead of paying a fresh TCP+TLS handshake per x402 request.
+limits = httpx.Limits(max_connections=64, max_keepalive_connections=32, keepalive_expiry=300.0)
+client = httpx.AsyncClient(timeout=30.0, limits=limits)
+
+
+async def close_http_client() -> None:
+    await client.aclose()
+
 
 class X402Manager:
     _instance = None
@@ -76,16 +85,15 @@ class X402Manager:
     async def _fetch_requirements(payload: dict) -> list[dict] | None:
         """Fetch payment requirements from thirdweb /accepts endpoint."""
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{THIRDWEB_X402_BASE}/accepts",
-                    json=payload,
-                    headers={"x-secret-key": config.THIRDWEB_SECRET_KEY},
-                )
-                if response.status_code == 402:
-                    return response.json().get("accepts", [])
-                logger.error(f"thirdweb /accepts error: {response.status_code} - {response.text}")
-                return None
+            response = await client.post(
+                f"{THIRDWEB_X402_BASE}/accepts",
+                json=payload,
+                headers={"x-secret-key": config.THIRDWEB_SECRET_KEY},
+            )
+            if response.status_code == 402:
+                return response.json().get("accepts", [])
+            logger.error(f"thirdweb /accepts error: {response.status_code} - {response.text}")
+            return None
         except Exception as e:
             logger.error(f"thirdweb /accepts exception: {e}", exc_info=True)
             return None
@@ -183,20 +191,19 @@ class X402Manager:
                 "paymentRequirements": requirements,
             }
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{THIRDWEB_X402_BASE}/verify",
-                    json=payload,
-                    headers={"x-secret-key": config.THIRDWEB_SECRET_KEY},
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    is_valid = data.get("isValid", False)
-                    if not is_valid:
-                        logger.warning(f"thirdweb verify returned invalid: {json.dumps(data)}")
-                    return is_valid
-                logger.error(f"thirdweb verify error: {response.status_code} - {response.text}")
-                return False
+            response = await client.post(
+                f"{THIRDWEB_X402_BASE}/verify",
+                json=payload,
+                headers={"x-secret-key": config.THIRDWEB_SECRET_KEY},
+            )
+            if response.status_code == 200:
+                data = response.json()
+                is_valid = data.get("isValid", False)
+                if not is_valid:
+                    logger.warning(f"thirdweb verify returned invalid: {json.dumps(data)}")
+                return is_valid
+            logger.error(f"thirdweb verify error: {response.status_code} - {response.text}")
+            return False
 
         except Exception as e:
             logger.error(f"x402 payment verification failed: {e}", exc_info=True)
@@ -226,22 +233,24 @@ class X402Manager:
             if config.THIRDWEB_VAULT_ACCESS_TOKEN:
                 headers["x-vault-access-token"] = config.THIRDWEB_VAULT_ACCESS_TOKEN
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    f"{THIRDWEB_X402_BASE}/settle",
-                    json={
-                        "x402Version": 2,
-                        "paymentPayload": payment_payload,
-                        "paymentRequirements": settle_requirements,
-                        "waitUntil": "confirmed",
-                    },
-                    headers=headers,
-                )
-                if response.status_code == 200:
-                    logger.info(f"x402 payment settled ({actual_amount_micro} micro-USDC)")
-                    return True
-                logger.error(f"thirdweb settle error: {response.status_code} - {response.text}")
-                return False
+            # Settling can take a while on-chain: per-request override past the
+            # 30s client default.
+            response = await client.post(
+                f"{THIRDWEB_X402_BASE}/settle",
+                json={
+                    "x402Version": 2,
+                    "paymentPayload": payment_payload,
+                    "paymentRequirements": settle_requirements,
+                    "waitUntil": "confirmed",
+                },
+                headers=headers,
+                timeout=120.0,
+            )
+            if response.status_code == 200:
+                logger.info(f"x402 payment settled ({actual_amount_micro} micro-USDC)")
+                return True
+            logger.error(f"thirdweb settle error: {response.status_code} - {response.text}")
+            return False
 
         except Exception as e:
             logger.error(f"x402 payment settlement failed: {e}", exc_info=True)
@@ -250,20 +259,19 @@ class X402Manager:
     async def refresh_prices(self):
         """Leader-only: pull per-token prices from backend and publish to Redis."""
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{config.BACKEND_API_URL}/x402/prices",
-                    headers={"x-admin-token": config.BACKEND_SECRET_TOKEN},
-                )
-                if response.status_code == 200:
-                    self.prices = response.json()
-                    logger.debug(f"Refreshed x402 prices: {len(self.prices)} models")
-                    try:
-                        await get_redis().set(REDIS_KEY_PRICES, json.dumps(self.prices))
-                    except Exception as e:
-                        logger.error(f"Failed to publish x402 prices to Redis: {e}", exc_info=True)
-                else:
-                    logger.error(f"Error fetching x402 prices: {response.status_code}")
+            response = await client.get(
+                f"{config.BACKEND_API_URL}/x402/prices",
+                headers={"x-admin-token": config.BACKEND_SECRET_TOKEN},
+            )
+            if response.status_code == 200:
+                self.prices = response.json()
+                logger.debug(f"Refreshed x402 prices: {len(self.prices)} models")
+                try:
+                    await get_redis().set(REDIS_KEY_PRICES, json.dumps(self.prices))
+                except Exception as e:
+                    logger.error(f"Failed to publish x402 prices to Redis: {e}", exc_info=True)
+            else:
+                logger.error(f"Error fetching x402 prices: {response.status_code}")
         except Exception as e:
             logger.error(f"Exception fetching x402 prices: {e}", exc_info=True)
 

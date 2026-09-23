@@ -24,6 +24,20 @@ def invalid_key_response(info: dict) -> JSONResponse:
     )
 
 
+def body_too_large_response(max_mb: int) -> JSONResponse:
+    """OpenAI-shaped 413 for an oversized request body, rejected before it is read."""
+    return JSONResponse(
+        status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+        content={
+            "error": {
+                "message": f"Request body exceeds the {max_mb}MB limit. Try a smaller payload.",
+                "type": "invalid_request_error",
+                "code": "request_too_large",
+            }
+        },
+    )
+
+
 def model_overloaded_response(model_name: str) -> JSONResponse:
     """OpenAI-shaped 503 for a free-tier request rejected at hard load.
 

@@ -55,3 +55,11 @@ def test_free_thresholds_warn_when_hard_non_positive(monkeypatch, caplog):
     cfg = _Config()
     assert cfg.FREE_HARD_LOAD == -1
     assert any("expected 0 < SOFT <= HARD" in record.message for record in caplog.records)
+
+
+def test_body_size_limit_defaults_and_env(monkeypatch):
+    monkeypatch.setenv("MAX_BODY_SIZE_MB", "")
+    assert _Config().MAX_BODY_SIZE_MB == 100
+
+    monkeypatch.setenv("MAX_BODY_SIZE_MB", "25")
+    assert _Config().MAX_BODY_SIZE_MB == 25

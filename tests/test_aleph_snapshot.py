@@ -31,12 +31,6 @@ class _FakeAsyncClient:
     def __init__(self, payload):
         self._payload = payload
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
     async def get(self, url):
         return _FakeResponse(self._payload)
 
@@ -69,7 +63,7 @@ def test_sync_from_redis_without_models_key_keeps_state(monkeypatch):
 
 def _refresh(monkeypatch, payload, service=None):
     service = service or AlephService()
-    monkeypatch.setattr(aleph_module.httpx, "AsyncClient", lambda **kwargs: _FakeAsyncClient(payload))
+    monkeypatch.setattr(aleph_module, "client", _FakeAsyncClient(payload))
     monkeypatch.setattr(aleph_module, "get_redis", lambda: _FakeRedis())
     asyncio.run(service.refresh())
     return service
