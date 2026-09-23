@@ -23,7 +23,7 @@ from src.api_keys import close_http_client as close_keys_http_client
 from src.auth import router as auth_router
 from src.config import config
 from src.constants import JOB_INTERVAL_SECONDS
-from src.errors import body_too_large_response
+from src.errors import body_too_large_response, client_disconnected_response
 from src.health import close_http_client as close_health_http_client
 from src.health import server_health_monitor
 from src.leader import leader
@@ -63,36 +63,43 @@ class _BodySizeLimitMiddleware:
             max_bytes = config.MAX_BODY_SIZE_MB * 1024 * 1024
             content_length = _content_length_int(Headers(scope=scope).get("content-length") or "")
             if content_length is not None and content_length > max_bytes:
-                await self._reject(scope, receive, send)
+                await self._reject(scope, receive, send, True)
                 return
             if content_length is None:
-                chunks = await self._drain(receive, max_bytes)
+                chunks, over_cap = await self._drain(receive, max_bytes)
                 if chunks is None:
-                    await self._reject(scope, receive, send)
+                    await self._reject(scope, receive, send, over_cap)
                     return
-                receive = _replay_receive(chunks)
+                receive = _replay_receive(chunks, receive)
         await self.app(scope, receive, send)
 
-    async def _reject(self, scope: Scope, receive: Receive, send: Send) -> None:
-        response = body_too_large_response(config.MAX_BODY_SIZE_MB)
+    async def _reject(self, scope: Scope, receive: Receive, send: Send, over_cap: bool) -> None:
+        if over_cap:
+            response = body_too_large_response(config.MAX_BODY_SIZE_MB)
+        else:
+            response = client_disconnected_response()
         await response(scope, receive, send)
 
-    async def _drain(self, receive: Receive, max_bytes: int) -> list[bytes] | None:
-        """Read the body up to the cap; None when the cap is exceeded or the
-        client disconnects mid-read (forwarding a truncated body would be worse)."""
+    async def _drain(self, receive: Receive, max_bytes: int) -> tuple[list[bytes] | None, bool]:
+        """Read the body up to the cap.
+
+        Returns (chunks, over_cap): over_cap True when the cap is exceeded;
+        (None, False) on a mid-drain client disconnect — forwarding a truncated
+        body would be worse.
+        """
         chunks: list[bytes] = []
         total = 0
         while True:
             message = await receive()
             if message["type"] == "http.disconnect":
-                return None
+                return None, False
             body = message.get("body", b"")
             total += len(body)
             if total > max_bytes:
-                return None
+                return None, True
             chunks.append(body)
             if not message.get("more_body"):
-                return chunks
+                return chunks, False
 
 
 def _content_length_int(raw: str) -> int | None:
@@ -102,17 +109,22 @@ def _content_length_int(raw: str) -> int | None:
     return int(raw)
 
 
-def _replay_receive(chunks: list[bytes]) -> Receive:
+def _replay_receive(chunks: list[bytes], real_receive: Receive) -> Receive:
     """Return a receive that yields the drained chunks back so the app reads
-    the body it would have read without the middleware."""
+    the body it would have read without the middleware.
+
+    After exhaustion it delegates to the original receive: StreamingResponse
+    listens for disconnect concurrently with the stream, so a synthetic
+    disconnect here would cancel the response right after the headers.
+    """
     state = {"index": 0}
 
-    async def receive() -> dict:
+    async def receive():
         if state["index"] < len(chunks):
             chunk = chunks[state["index"]]
             state["index"] += 1
             return {"type": "http.request", "body": chunk, "more_body": state["index"] < len(chunks)}
-        return {"type": "http.disconnect"}
+        return await real_receive()
 
     return receive
 

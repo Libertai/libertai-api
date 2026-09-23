@@ -24,6 +24,24 @@ def invalid_key_response(info: dict) -> JSONResponse:
     )
 
 
+def client_disconnected_response() -> JSONResponse:
+    """400 abort for a client that disconnects mid-drain.
+
+    The response goes nowhere (the client is gone), but fronting proxies' logs
+    should not report an oversized body where the real cause is a disconnect.
+    """
+    return JSONResponse(
+        status_code=HTTPStatus.BAD_REQUEST,
+        content={
+            "error": {
+                "message": "Client disconnected during the request.",
+                "type": "invalid_request_error",
+                "code": "client_disconnected",
+            }
+        },
+    )
+
+
 def body_too_large_response(max_mb: int) -> JSONResponse:
     """OpenAI-shaped 413 for an oversized request body, rejected before it is read."""
     return JSONResponse(

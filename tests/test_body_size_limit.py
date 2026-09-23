@@ -90,14 +90,59 @@ def test_chunked_body_over_cap_rejected(monkeypatch):
 
 
 def test_chunked_client_disconnect_rejected(monkeypatch):
-    # A client disconnecting mid-drain also rejects: forwarding a truncated
-    # body would be worse.
+    # A client disconnecting mid-drain also rejects — with a distinct 400 so
+    # fronting proxies' logs don't report an oversized body.
     messages = [{"type": "http.disconnect"}]
     reached, sent = _run_middleware(_scope(None), monkeypatch, None, messages)
 
     assert reached == []
     start = next(m for m in sent if m["type"] == "http.response.start")
-    assert start["status"] == 413
+    assert start["status"] == 400
+    body = next(m for m in sent if m["type"] == "http.response.body")
+    assert b"client_disconnected" in body["body"]
+
+
+def test_chunked_request_reaches_streaming_response(monkeypatch):
+    # StreamingResponse listens for disconnect concurrently with the stream:
+    # after the drained chunks are exhausted the replayed receive must
+    # delegate to the real one, or the listener sees a synthetic disconnect
+    # and cancels the response right after the headers (zero body chunks).
+    monkeypatch.setattr(server.config, "MAX_BODY_SIZE_MB", 100)
+    from starlette.responses import StreamingResponse
+
+    async def stream_app(scope, receive, send):
+        async def generate():
+            for i in range(3):
+                yield f"chunk{i}".encode()
+
+        await StreamingResponse(generate(), media_type="text/plain")(scope, receive, send)
+
+    async def real_receive():
+        await asyncio.Event().wait()  # blocks, like uvicorn's receive until a real disconnect
+
+    messages: list[dict] = []
+
+    async def send(message):
+        # Yield control like a real transport write, so the disconnect listener
+        # actually interleaves with the stream — this is what makes the test
+        # catch a synthetic-disconnect replay.
+        await asyncio.sleep(0)
+        messages.append(message)
+
+    receive_messages = [{"type": "http.request", "body": b"hello ", "more_body": False}]
+
+    async def receive():
+        if receive_messages:
+            return receive_messages.pop(0)
+        return await real_receive()
+
+    mw = _BodySizeLimitMiddleware(stream_app)
+    asyncio.run(mw({"type": "http", "headers": []}, receive, send))
+
+    start = next(m for m in messages if m["type"] == "http.response.start")
+    assert start["status"] == 200
+    body = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+    assert body == b"chunk0chunk1chunk2"
 
 
 def test_unicode_digit_content_length_is_drained_not_500(monkeypatch):
