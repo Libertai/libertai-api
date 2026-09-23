@@ -21,7 +21,7 @@ USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 
 _enc = tiktoken.get_encoding("cl100k_base")
 
-# Thirdweb and the backend sit behind no proxy; a module-level client reuses
+# These endpoints need no forward proxy: a module-level client reuses
 # connections instead of paying a fresh TCP+TLS handshake per x402 request.
 limits = httpx.Limits(max_connections=64, max_keepalive_connections=32, keepalive_expiry=300.0)
 client = httpx.AsyncClient(timeout=30.0, limits=limits)
