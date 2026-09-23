@@ -106,10 +106,15 @@ class _BodySizeLimitMiddleware:
 
 
 def _content_length_int(raw: str) -> int | None:
-    """ASCII-digits-only parse: isdigit() also accepts Unicode digits that int() rejects."""
+    """ASCII-digits-only parse: isdigit() also accepts Unicode digits that int()
+    rejects, and 4301+ digits trip Python's int-str-conversion limit — both
+    fall back to the capped drain instead of raising."""
     if not raw.isascii() or not raw.isdigit():
         return None
-    return int(raw)
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 def _replay_receive(chunks: list[bytes], real_receive: Receive) -> Receive:

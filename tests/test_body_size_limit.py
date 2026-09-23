@@ -161,6 +161,17 @@ def test_unicode_digit_content_length_is_drained_not_500(monkeypatch):
     assert sent == []
 
 
+def test_huge_ascii_digit_content_length_is_drained_not_500(monkeypatch):
+    # int() raises for 4301+ ASCII digits (Python 3.11+ conversion limit); the
+    # parse falls back to the capped drain instead of raising a 500.
+    scope = {"type": "http", "headers": [(b"content-length", b"1" * 5000)]}
+    messages = [{"type": "http.request", "body": b"ok", "more_body": False}]
+    reached, sent = _run_middleware(scope, monkeypatch, None, messages)
+
+    assert reached == [b"ok"]
+    assert sent == []
+
+
 def test_non_http_scope_passes_through(monkeypatch):
     reached, sent = _run_middleware({"type": "websocket", "headers": []}, monkeypatch, None)
 
