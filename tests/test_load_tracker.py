@@ -2,7 +2,7 @@ import asyncio
 from unittest.mock import patch
 
 from src import load_tracker
-from src.load_tracker import _prune_and_count, acquire, get_all_loads, release
+from src.load_tracker import _prune_and_count, acquire, get_all_loads, get_model_loads, release
 
 
 def test_prune_and_count_counts_live_drops_expired_and_malformed():
@@ -77,8 +77,9 @@ class _FakeRedis:
 
 
 def _run(fake, models, coro_factory, clock=None):
-    with patch.object(load_tracker, "get_redis", return_value=fake), patch.object(
-        load_tracker.config, "MODELS", models
+    with (
+        patch.object(load_tracker, "get_redis", return_value=fake),
+        patch.object(load_tracker.config, "MODELS", models),
     ):
         if clock is not None:
             with patch.object(load_tracker.time, "time", clock):
@@ -145,3 +146,56 @@ def test_reacquire_keeps_long_stream_counted_past_original_ttl():
     t["now"] = 1000.0 + load_tracker.LEASE_TTL + 10  # past original deadline
     loads = _run(fake, models, get_all_loads, clock=lambda: t["now"])
     assert loads == {"A": 1}  # still counted thanks to the refresh
+
+
+def test_get_model_loads_reads_only_the_models_servers():
+    """The proxy fetches this per request: it must not HGETALL every configured
+    server of every model, and duplicate entries must not double-read."""
+    fake = _FakeRedis()
+    models = {"m": ["A", "B", "A"], "other": ["C"]}  # duplicate "A" entry
+
+    async def scenario():
+        await acquire("A", "r1")
+        await acquire("B", "r2")
+        await acquire("C", "r3")
+        return await get_model_loads("m")
+
+    hgetall_keys: list[str] = []
+
+    with (
+        patch.object(load_tracker, "get_redis", return_value=fake),
+        patch.object(load_tracker.config, "MODELS", models),
+    ):
+        base_pipeline = fake.pipeline
+
+        def recording_pipeline(transaction=False):
+            pipe = base_pipeline(transaction)
+            orig_hgetall = pipe.hgetall
+
+            def hgetall(key):
+                hgetall_keys.append(key)
+                return orig_hgetall(key)
+
+            pipe.hgetall = hgetall
+            return pipe
+
+        fake.pipeline = recording_pipeline
+        loads = asyncio.run(scenario())
+
+    # Only the model's servers were read (the duplicate "A" deduped), and the
+    # other model's server was never touched.
+    assert len(hgetall_keys) == 2
+    assert load_tracker._key("C") not in hgetall_keys
+    assert loads == {"A": 1, "B": 1}
+
+
+def test_get_model_loads_deduplicates_duplicate_model_entries():
+    fake = _FakeRedis()
+    models = {"m": ["A", "A"]}
+
+    async def scenario():
+        await acquire("A", "r1")
+        return await get_model_loads("m")
+
+    loads = _run(fake, models, scenario)
+    assert loads == {"A": 1}

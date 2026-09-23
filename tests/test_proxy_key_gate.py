@@ -81,7 +81,7 @@ def test_valid_key_passes_the_gate(monkeypatch):
     monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
     monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
 
-    async def _no_loads():
+    async def _no_loads(_model):
         return {}
 
     async def _noop(*args, **kwargs):
@@ -90,7 +90,7 @@ def test_valid_key_passes_the_gate(monkeypatch):
     async def _refuse(*args, **kwargs):
         raise httpx.ConnectError("refused")
 
-    monkeypatch.setattr(proxy, "get_all_loads", _no_loads)
+    monkeypatch.setattr(proxy, "get_model_loads", _no_loads)
     monkeypatch.setattr(proxy, "load_acquire", _noop)
     monkeypatch.setattr(proxy, "load_release", _noop)
     monkeypatch.setattr(proxy.client, "send", _refuse)
@@ -113,7 +113,7 @@ def test_key_in_both_sets_treated_as_valid(monkeypatch):
     monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
     monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
 
-    async def _no_loads():
+    async def _no_loads(_model):
         return {}
 
     async def _noop(*args, **kwargs):
@@ -122,7 +122,7 @@ def test_key_in_both_sets_treated_as_valid(monkeypatch):
     async def _refuse(*args, **kwargs):
         raise httpx.ConnectError("refused")
 
-    monkeypatch.setattr(proxy, "get_all_loads", _no_loads)
+    monkeypatch.setattr(proxy, "get_model_loads", _no_loads)
     monkeypatch.setattr(proxy, "load_acquire", _noop)
     monkeypatch.setattr(proxy, "load_release", _noop)
     monkeypatch.setattr(proxy.client, "send", _refuse)
@@ -159,7 +159,7 @@ def test_x_api_key_is_forwarded_as_a_bearer(monkeypatch):
     monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
     monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
 
-    async def _no_loads():
+    async def _no_loads(_model):
         return {}
 
     async def _noop(*args, **kwargs):
@@ -171,7 +171,7 @@ def test_x_api_key_is_forwarded_as_a_bearer(monkeypatch):
         forwarded.update(req.headers)
         raise httpx.ConnectError("refused")
 
-    monkeypatch.setattr(proxy, "get_all_loads", _no_loads)
+    monkeypatch.setattr(proxy, "get_model_loads", _no_loads)
     monkeypatch.setattr(proxy, "load_acquire", _noop)
     monkeypatch.setattr(proxy, "load_release", _noop)
     monkeypatch.setattr(proxy.client, "send", _capture)
@@ -217,13 +217,13 @@ def _stub_forwarding(monkeypatch, load_sequence, models=None):
     """Stub the upstream so a request reaching the forwarding loop fails over to
     the all-servers-failed 503. Returns the list of send calls (empty when the
     gate rejected before any upstream attempt). load_sequence feeds successive
-    get_all_loads() snapshots; the last value repeats once exhausted."""
+    get_model_loads() snapshots; the last value repeats once exhausted."""
     monkeypatch.setattr(proxy.config, "MODELS", models or {"m": ["http://up"]})
     monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
 
     snapshots = list(load_sequence)
 
-    async def _loads():
+    async def _loads(_model):
         if len(snapshots) > 1:
             return snapshots.pop(0)
         return snapshots[0]
@@ -237,7 +237,7 @@ def _stub_forwarding(monkeypatch, load_sequence, models=None):
         sends.append(str(req.url))
         raise httpx.ConnectError("refused")
 
-    monkeypatch.setattr(proxy, "get_all_loads", _loads)
+    monkeypatch.setattr(proxy, "get_model_loads", _loads)
     monkeypatch.setattr(proxy, "load_acquire", _noop)
     monkeypatch.setattr(proxy, "load_release", _noop)
     monkeypatch.setattr(proxy.client, "send", _refuse)

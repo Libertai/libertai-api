@@ -29,13 +29,13 @@ def _stub_proxy(monkeypatch):
     monkeypatch.setattr(proxy.aleph_service, "is_reasoning_model", lambda model: False)
     monkeypatch.setattr(proxy.aleph_service, "is_vision_model", lambda model: True)
 
-    async def _no_loads():
+    async def _no_loads(_model):
         return {}
 
     async def _noop(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(proxy, "get_all_loads", _no_loads)
+    monkeypatch.setattr(proxy, "get_model_loads", _no_loads)
     monkeypatch.setattr(proxy, "load_acquire", _noop)
     monkeypatch.setattr(proxy, "load_release", _noop)
 
