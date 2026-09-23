@@ -60,22 +60,25 @@ class _BodySizeLimitMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and config.MAX_BODY_SIZE_MB > 0:
-            max_bytes = config.MAX_BODY_SIZE_MB * 1024 * 1024
+            # Read the cap once: rejecting at one cap and reporting another
+            # would be inconsistent if it changed mid-request.
+            max_mb = config.MAX_BODY_SIZE_MB
+            max_bytes = max_mb * 1024 * 1024
             content_length = _content_length_int(Headers(scope=scope).get("content-length") or "")
             if content_length is not None and content_length > max_bytes:
-                await self._reject(scope, receive, send, True)
+                await self._reject(scope, receive, send, max_mb, True)
                 return
             if content_length is None:
                 chunks, over_cap = await self._drain(receive, max_bytes)
                 if chunks is None:
-                    await self._reject(scope, receive, send, over_cap)
+                    await self._reject(scope, receive, send, max_mb, over_cap)
                     return
                 receive = _replay_receive(chunks, receive)
         await self.app(scope, receive, send)
 
-    async def _reject(self, scope: Scope, receive: Receive, send: Send, over_cap: bool) -> None:
+    async def _reject(self, scope: Scope, receive: Receive, send: Send, max_mb: int, over_cap: bool) -> None:
         if over_cap:
-            response = body_too_large_response(config.MAX_BODY_SIZE_MB)
+            response = body_too_large_response(max_mb)
         else:
             response = client_disconnected_response()
         await response(scope, receive, send)

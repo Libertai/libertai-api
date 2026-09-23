@@ -51,6 +51,8 @@ def test_oversized_body_rejected_before_any_read(monkeypatch):
     assert reached == []
     start = next(m for m in sent if m["type"] == "http.response.start")
     assert start["status"] == 413
+    body = next(m for m in sent if m["type"] == "http.response.body")
+    assert b"request_too_large" in body["body"]
 
 
 def test_boundary_body_passes_through(monkeypatch):
@@ -77,16 +79,19 @@ def test_chunked_body_under_cap_is_drained_and_replayed(monkeypatch):
 
 def test_chunked_body_over_cap_rejected(monkeypatch):
     # The same attacker can bypass the content-length check with chunked
-    # framing, so the drain must cap those bodies too.
+    # framing, so the drain must cap those bodies too. Small cap + few-KB
+    # chunks exercises the same path without allocating ~120MB.
     messages = [
-        {"type": "http.request", "body": b"x" * (60 * 1024 * 1024), "more_body": True},
-        {"type": "http.request", "body": b"y" * (60 * 1024 * 1024), "more_body": False},
+        {"type": "http.request", "body": b"x" * (600 * 1024), "more_body": True},
+        {"type": "http.request", "body": b"y" * (600 * 1024), "more_body": False},
     ]
-    reached, sent = _run_middleware(_scope(None), monkeypatch, None, messages)
+    reached, sent = _run_middleware(_scope(None), monkeypatch, 1, messages)
 
     assert reached == []
     start = next(m for m in sent if m["type"] == "http.response.start")
     assert start["status"] == 413
+    body = next(m for m in sent if m["type"] == "http.response.body")
+    assert b"request_too_large" in body["body"]
 
 
 def test_chunked_client_disconnect_rejected(monkeypatch):
@@ -169,3 +174,27 @@ def test_disabled_cap_passes_everything(monkeypatch):
 
     assert len(reached) == 1
     assert sent == []
+
+
+def test_real_app_stack_413_carries_cors_headers(monkeypatch):
+    # The middleware sits inside CORSMiddleware (added last = outermost), so the
+    # 413 passes back through CORS and carries CORS headers for browser
+    # clients. Hits the real app stack to guard against a future reshuffle of
+    # the add_middleware calls; the request never reaches a route.
+    from fastapi.testclient import TestClient
+
+    from src.server import app
+
+    monkeypatch.setattr(server.config, "MAX_BODY_SIZE_MB", 1)
+    client = TestClient(app)
+    resp = client.post(
+        "/v1/chat/completions",
+        content=b"x" * (2 * 1024 * 1024),
+        # CORS only decorates cross-origin requests, so the assertion needs an
+        # Origin header.
+        headers={"authorization": "Bearer x", "Origin": "http://localhost:3000"},
+    )
+
+    assert resp.status_code == 413
+    assert resp.headers["access-control-allow-origin"] == "*"
+    assert resp.json()["error"]["code"] == "request_too_large"
