@@ -39,6 +39,10 @@ from src.x402 import x402_manager
 
 router = APIRouter(tags=["Proxy"])
 
+# Tiers the admission gate below sheds. LiberClaw keys arrive namespaced as
+# "liberclaw:<plan>"; only its free plan is gated, paid plans bypass like "go"/"pro".
+_GATED_TIERS = frozenset({"free", "liberclaw:free"})
+
 # vLLM refuses an over-long prompt at admission with a 400; the surrounding wording
 # changes between versions, so match on the phrase that has stayed constant.
 _CONTEXT_LENGTH_MARKER = "maximum context length"
@@ -116,7 +120,7 @@ async def _free_tier_gate(
     # casing drift ("Free") must not silently fail every free-tier key open.
     if api_key is None or not keys_manager.key_exists(api_key):
         return loads, None
-    if (keys_manager.tier(api_key) or "").lower() != "free":
+    if (keys_manager.tier(api_key) or "").lower() not in _GATED_TIERS:
         return loads, None
 
     pool_load = _pool_load(model, loads)
