@@ -16,22 +16,23 @@ def _matches(model: str, patterns: list[str]) -> bool:
 def model_not_in_plan(api_key: str | None, requested: str, resolved: str) -> JSONResponse | None:
     """403 response when the key's tier has an allowlist that excludes the model, else None.
 
-    `resolved` is the model actually served (redirects applied, `-thinking`
-    reduced to its base), so a thinking variant of a blocked model stays
-    blocked and an alias redirecting to an allowed model passes. `requested`
-    is only matched exactly, so a listed alias passes whatever it redirects to,
-    but a glob never reaches through a redirect to an unlisted model.
+    Only `resolved` is matched: the model actually served (redirects applied,
+    `-thinking` reduced to its base). A thinking variant of a blocked model stays
+    blocked and an alias redirecting to an allowed model passes. The requested
+    alias never counts: redirects come from the Aleph LTAI_PRICING aggregate, so
+    repointing an allowed-looking alias must not hand a bigger model to the tier.
+    `requested` is only logged.
 
     Unknown keys and tiers without an entry fail open, like the free-tier gate
     in src/proxy.py: sync skew must not lock paying users out.
     """
     if api_key is None or not keys_manager.key_exists(api_key):
         return None
-    tier = (keys_manager.tier(api_key) or "").lower()
+    tier = (keys_manager.tier(api_key) or "").strip().lower()
     allowed = config.TIER_MODEL_ALLOWLIST.get(tier)
     if allowed is None:
         return None
-    if _matches(resolved.lower(), allowed) or requested.lower() in allowed:
+    if _matches(resolved.strip().lower(), allowed):
         return None
     logger.info(f"Tier '{tier}' request to model '{requested}' (resolved '{resolved}') blocked: not in plan")
     return model_not_in_plan_response()

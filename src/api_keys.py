@@ -88,7 +88,9 @@ class KeysManager:
         return self.invalid_keys.get(key)
 
     def tier(self, key: str) -> str | None:
-        return self.tiers.get(key)
+        # Stripped: stray whitespace from the backend must not fail a gated tier open.
+        tier = self.tiers.get(key)
+        return tier.strip() if tier is not None else None
 
     async def refresh_keys(self):
         """Leader-only: fetch authoritative keys and publish to Redis."""

@@ -62,9 +62,14 @@ def sends(monkeypatch):
     monkeypatch.setattr(proxy, "load_release", _noop)
     monkeypatch.setattr(proxy.client, "send", _refuse)
 
-    KeysManager().keys = {"free-key", "paid-key", "skew-key", "odd-key"}
+    KeysManager().keys = {"free-key", "paid-key", "skew-key", "odd-key", "space-key"}
     KeysManager().invalid_keys = {}
-    KeysManager().tiers = {"free-key": "liberclaw:free", "paid-key": "liberclaw:pro", "odd-key": "LiberClaw:Free"}
+    KeysManager().tiers = {
+        "free-key": "liberclaw:free",
+        "paid-key": "liberclaw:pro",
+        "odd-key": "LiberClaw:Free",
+        "space-key": "liberclaw:free ",
+    }
     return attempted
 
 
@@ -131,10 +136,15 @@ def test_glob_does_not_reach_through_a_redirect(sends):
     assert _post("cheap-legacy").status_code == 403
 
 
-def test_exactly_listed_alias_passes_whatever_it_redirects_to(sends, monkeypatch):
+def test_listed_alias_redirecting_to_unlisted_model_is_blocked(sends, monkeypatch):
+    # Redirects come from the Aleph pricing aggregate: an allowed-looking alias
+    # repointed at a bigger model must not hand that model to the tier.
     monkeypatch.setattr(proxy.config, "TIER_MODEL_ALLOWLIST", {"liberclaw:free": ["old-big"]})
 
-    assert _post("old-big").status_code == 503
+    resp = _post("old-big")
+
+    assert resp.status_code == 403
+    assert sends == []
 
 
 def test_paid_tier_passes(sends):
@@ -143,6 +153,41 @@ def test_paid_tier_passes(sends):
 
 def test_tier_lookup_is_case_insensitive(sends):
     assert _post("big", key="odd-key").status_code == 403
+
+
+def test_tier_with_stray_whitespace_is_still_gated(sends):
+    assert _post("big", key="space-key").status_code == 403
+
+
+def test_anthropic_messages_with_x_api_key_only_is_blocked(sends):
+    # Anthropic SDKs authenticate with x-api-key alone; that must not slip past.
+    app = FastAPI()
+    app.include_router(proxy.router)
+
+    resp = TestClient(app).post(
+        "/v1/messages",
+        json={"model": "big", "max_tokens": 16, "messages": [{"role": "user", "content": "hi"}]},
+        headers={"x-api-key": "free-key"},
+    )
+
+    assert resp.status_code == 403
+    assert resp.json() == NOT_IN_PLAN
+    assert sends == []
+
+
+def test_streaming_request_is_blocked_the_same_way(sends):
+    app = FastAPI()
+    app.include_router(proxy.router)
+
+    resp = TestClient(app).post(
+        "/v1/chat/completions",
+        json={"model": "big", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+        headers={"Authorization": "Bearer free-key"},
+    )
+
+    assert resp.status_code == 403
+    assert resp.json() == NOT_IN_PLAN
+    assert sends == []
 
 
 def test_key_without_tier_passes(sends):
