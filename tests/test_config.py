@@ -89,8 +89,14 @@ def test_tier_model_allowlist_parsed_and_lowercased(monkeypatch):
     assert _Config().TIER_MODEL_ALLOWLIST == {"liberclaw:free": ["qwen3.6-35b-a3b", "search/*"]}
 
 
+def test_tier_model_allowlist_strips_tiers_and_entries(monkeypatch):
+    monkeypatch.setenv("TIER_MODEL_ALLOWLIST", '{" liberclaw:free ": [" qwen3.6-35b-a3b ", "search/* "]}')
+    assert _Config().TIER_MODEL_ALLOWLIST == {"liberclaw:free": ["qwen3.6-35b-a3b", "search/*"]}
+
+
 @pytest.mark.parametrize("raw", ["{not json", '["a"]', '{"liberclaw:free": "qwen"}', '{"liberclaw:free": [1]}'])
-def test_tier_model_allowlist_malformed_disables_with_error(_capture_config_logs, monkeypatch, raw):
+def test_tier_model_allowlist_malformed_fails_startup(monkeypatch, raw):
+    # Falling back to "off" would silently serve every model to every plan.
     monkeypatch.setenv("TIER_MODEL_ALLOWLIST", raw)
-    assert _Config().TIER_MODEL_ALLOWLIST == {}
-    assert any("TIER_MODEL_ALLOWLIST" in record.message for record in _capture_config_logs.records)
+    with pytest.raises(ValueError, match="TIER_MODEL_ALLOWLIST"):
+        _Config()
