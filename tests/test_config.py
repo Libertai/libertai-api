@@ -77,3 +77,26 @@ def test_body_size_limit_defaults_and_env(monkeypatch):
 
     monkeypatch.setenv("MAX_BODY_SIZE_MB", "25")
     assert _Config().MAX_BODY_SIZE_MB == 25
+
+
+def test_tier_model_allowlist_defaults_to_empty(monkeypatch):
+    monkeypatch.setenv("TIER_MODEL_ALLOWLIST", "")
+    assert _Config().TIER_MODEL_ALLOWLIST == {}
+
+
+def test_tier_model_allowlist_parsed_and_lowercased(monkeypatch):
+    monkeypatch.setenv("TIER_MODEL_ALLOWLIST", '{"LiberClaw:Free": ["Qwen3.6-35B-A3B", "search/*"]}')
+    assert _Config().TIER_MODEL_ALLOWLIST == {"liberclaw:free": ["qwen3.6-35b-a3b", "search/*"]}
+
+
+def test_tier_model_allowlist_strips_tiers_and_entries(monkeypatch):
+    monkeypatch.setenv("TIER_MODEL_ALLOWLIST", '{" liberclaw:free ": [" qwen3.6-35b-a3b ", "search/* "]}')
+    assert _Config().TIER_MODEL_ALLOWLIST == {"liberclaw:free": ["qwen3.6-35b-a3b", "search/*"]}
+
+
+@pytest.mark.parametrize("raw", ["{not json", '["a"]', '{"liberclaw:free": "qwen"}', '{"liberclaw:free": [1]}'])
+def test_tier_model_allowlist_malformed_fails_startup(monkeypatch, raw):
+    # Falling back to "off" would silently serve every model to every plan.
+    monkeypatch.setenv("TIER_MODEL_ALLOWLIST", raw)
+    with pytest.raises(ValueError, match="TIER_MODEL_ALLOWLIST"):
+        _Config()

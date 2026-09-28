@@ -17,6 +17,27 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _tier_model_allowlist_env(name: str) -> dict[str, list[str]]:
+    """Read a JSON {tier: [model, ...]} env var, stripped and lowercased to match the
+    normalised tier and model lookups in src/tier_allowlist.py.
+
+    Missing or blank disables the allowlist. A malformed value raises instead of
+    falling back: silently dropping it would serve every model to every plan.
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Invalid {name}: not valid JSON ({error})") from error
+    if not isinstance(data, dict) or not all(
+        isinstance(models, list) and all(isinstance(m, str) for m in models) for models in data.values()
+    ):
+        raise ValueError(f"Invalid {name}: expected a JSON object of tier -> list of model names")
+    return {tier.strip().lower(): [m.strip().lower() for m in models] for tier, models in data.items()}
+
+
 class _Config:
     BACKEND_API_URL: str
     BACKEND_SECRET_TOKEN: str
@@ -37,6 +58,7 @@ class _Config:
     FREE_SOFT_LOAD: int
     FREE_HARD_LOAD: int
     MAX_BODY_SIZE_MB: int
+    TIER_MODEL_ALLOWLIST: dict[str, list[str]]
 
     LOG_LEVEL: int
 
@@ -81,6 +103,18 @@ class _Config:
         # entire body in memory, so an uncapped upload is a memory-exhaustion
         # vector. 0 or negative disables the cap.
         self.MAX_BODY_SIZE_MB = _int_env("MAX_BODY_SIZE_MB", 100)
+        # Per-tier model allowlist (src/tier_allowlist.py), as JSON, e.g.
+        # TIER_MODEL_ALLOWLIST='{"liberclaw:free": ["qwen3.6-35b-a3b", "search/*"]}'.
+        # A key whose tier has an entry may only use the listed models; a trailing
+        # "*" matches by prefix, and the match is on the model actually served
+        # (after redirects), never the requested alias. Tiers without an entry are
+        # unrestricted, and the default (unset) turns the check off; a set but
+        # malformed value fails startup.
+        # The gateway's /search and /search/fetch count as the models
+        # "search/search" and "search/fetch". That only covers search traffic that
+        # goes through this gateway: agents call search.libertai.io directly, so
+        # leaving "search/*" out does not restrict agent search.
+        self.TIER_MODEL_ALLOWLIST = _tier_model_allowlist_env("TIER_MODEL_ALLOWLIST")
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")

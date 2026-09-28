@@ -1,9 +1,11 @@
 import httpx
 from fastapi import APIRouter, Request, Response
 
+from src.auth import extract_api_key
 from src.config import config
 from src.logger import setup_logger
 from src.ssl_trust import SSL_CONTEXT
+from src.tier_allowlist import model_not_in_plan
 
 router = APIRouter(tags=["Search"])
 logger = setup_logger(__name__)
@@ -17,6 +19,13 @@ async def close_http_client() -> None:
 
 
 async def _forward(request: Request, path: str) -> Response:
+    # Search has no model field; each endpoint counts as the pseudo-model
+    # "search/<path>" so a tier allowlist can include or exclude it.
+    search_model = f"search/{path}"
+    plan_response = model_not_in_plan(extract_api_key(request.headers), search_model, search_model)
+    if plan_response is not None:
+        return plan_response
+
     url = f"{config.SEARCH_SERVICE_URL}/{path}"
     headers = dict(request.headers)
     headers.pop("host", None)

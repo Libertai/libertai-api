@@ -558,3 +558,32 @@ def test_no_auth_x402_request_bypasses_the_gate_at_hard_load(monkeypatch):
 
     assert resp.status_code == 402
     assert resp.json() == {"x402": True}
+
+
+def test_liberclaw_free_key_is_gated(monkeypatch):
+    # LiberClaw keys arrive namespaced; its free plan is shed like "free".
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 50}])
+    KeysManager().keys = {"claw"}
+    KeysManager().tiers = {"claw": "liberclaw:free"}
+
+    resp = _post_with_key("claw")
+
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "model_overloaded"
+    assert sends == []
+
+
+@pytest.mark.parametrize("tier", ["liberclaw:starter", "liberclaw:pro", "liberclaw:team"])
+def test_liberclaw_paid_key_bypasses_the_gate(monkeypatch, tier):
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 50}])
+    KeysManager().keys = {"claw"}
+    KeysManager().tiers = {"claw": tier}
+
+    resp = _post_with_key("claw")
+
+    assert resp.json()["detail"] == "All servers unavailable for model m"
+    assert len(sends) == 1

@@ -77,3 +77,20 @@ def model_overloaded_response(model_name: str) -> JSONResponse:
         # worst-case in-gate time is this plus one poll overshoot.
         headers={"retry-after": str(ceil(FREE_GATE_MAX_WAIT))},
     )
+
+
+def model_not_in_plan_response() -> JSONResponse:
+    """OpenAI-shaped 403 for a model outside the key's plan (TIER_MODEL_ALLOWLIST).
+
+    The LiberClaw app keys its upgrade prompt off `code`, so it must stay stable.
+    """
+    return JSONResponse(
+        status_code=HTTPStatus.FORBIDDEN,
+        content={
+            "error": {
+                "message": "This model is available on LiberClaw paid plans. Upgrade at https://liberclaw.ai",
+                "type": "invalid_request_error",
+                "code": "model_not_in_plan",
+            }
+        },
+    )
