@@ -36,15 +36,18 @@ VERIFY_ATTEMPTS = 5
 VERIFY_INTERVAL = 3.0
 
 
-async def fetch_aggregate(client: httpx.AsyncClient) -> dict:
+async def fetch_aggregate(client: httpx.AsyncClient, aggregate_address: str) -> dict:
     response = await client.get(
-        f"https://api2.aleph.im/api/v0/aggregates/{AGGREGATE_ADDRESS}.json?keys={AGGREGATE_KEY}"
+        f"https://api2.aleph.im/api/v0/aggregates/{aggregate_address}.json?keys={AGGREGATE_KEY}"
     )
     response.raise_for_status()
     return dict(response.json().get("data", {}).get(AGGREGATE_KEY, {}))
 
 
 async def main() -> None:
+    # load_dotenv before the parser so .env values can feed the argument defaults.
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="Set or remove a temporary model redirection")
     parser.add_argument("--from", dest="from_model", required=True, help="Model name to redirect")
     parser.add_argument("--to", dest="to_model", help="Target model (required unless --remove)")
@@ -53,11 +56,10 @@ async def main() -> None:
     parser.add_argument("--channel", default=AGGREGATE_CHANNEL)
     parser.add_argument(
         "--aggregate-address",
-        default=os.environ.get("ALEPH_AGGREGATE_ADDRESS", AGGREGATE_ADDRESS),
+        default=os.environ.get("ALEPH_AGGREGATE_ADDRESS") or AGGREGATE_ADDRESS,
     )
     args = parser.parse_args()
 
-    load_dotenv()
     private_key = os.environ.get("ALEPH_SENDER_PRIVATE_KEY", "")
     if not private_key:
         raise SystemExit("ALEPH_SENDER_PRIVATE_KEY not set in the environment")
@@ -74,7 +76,12 @@ async def main() -> None:
         )
 
     async with httpx.AsyncClient(timeout=30.0) as http:
-        content = await fetch_aggregate(http)
+        content = await fetch_aggregate(http, args.aggregate_address)
+        if not content.get("models"):
+            raise SystemExit(
+                f"Aggregate {args.aggregate_address} returned no 'models' under key "
+                f"'{AGGREGATE_KEY}' — refusing to publish over it (the proxy would lose its model list)"
+            )
 
         redirections = [dict(r) for r in content.get("redirections", [])]
         from_model = args.from_model.lower()
@@ -98,9 +105,12 @@ async def main() -> None:
         content["redirections"] = redirections
 
         async with AuthenticatedAlephHttpClient(account=account) as client:
+            # Explicit address: the SDK otherwise falls back to the ADDRESS_TO_USE
+            # env var, which could publish away from the ownership-checked address.
             message, _status = await client.create_aggregate(
                 key=AGGREGATE_KEY,
                 content=content,
+                address=args.aggregate_address,
                 channel=args.channel,
             )
         print(f"Published aggregate update (message hash: {message.item_hash})")
@@ -109,7 +119,7 @@ async def main() -> None:
         # propagation is eventually consistent, so retry briefly.
         for attempt in range(1, VERIFY_ATTEMPTS + 1):
             await asyncio.sleep(VERIFY_INTERVAL)
-            current = await fetch_aggregate(http)
+            current = await fetch_aggregate(http, args.aggregate_address)
             live = {r.get("from", "").lower(): r.get("to", "") for r in current.get("redirections", [])}
             if args.remove and from_model not in live:
                 print(f"Verified: no redirect from '{from_model}' remains")
@@ -124,6 +134,7 @@ async def main() -> None:
         f"check the message hash above and https://api.libertai.io/libertai/models "
         f"(published at {time.strftime('%H:%M:%S')})"
     )
+    raise SystemExit(1)
 
 
 if __name__ == "__main__":
