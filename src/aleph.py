@@ -24,6 +24,9 @@ async def close_http_client() -> None:
     await client.aclose()
 
 
+MAX_REDIRECT_HOPS = 5
+
+
 class AlephService:
     def __init__(self):
         self._last_fetch_time: float = 0
@@ -140,8 +143,17 @@ class AlephService:
         return self.models.get(model.lower())
 
     def resolve(self, model: str) -> str:
-        """Return the target model if redirected, else the original."""
-        return self.redirections.get(model.lower(), model)
+        """Follow redirections up to MAX_REDIRECT_HOPS; returns the original if not redirected.
+
+        A cycle or an over-long chain stops at the last model reached rather than erroring.
+        """
+        current = model
+        for _ in range(MAX_REDIRECT_HOPS):
+            target = self.redirections.get(current.lower())
+            if target is None or target == current.lower():
+                break
+            current = target
+        return current
 
 
 aleph_service = AlephService()

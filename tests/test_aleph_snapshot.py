@@ -111,3 +111,22 @@ def test_refresh_with_empty_models_list_is_authoritatively_empty(monkeypatch):
     service = _refresh(monkeypatch, {"data": {"LTAI_PRICING": {"models": []}}})
     assert service.models_loaded
     assert service.models == {}
+
+
+def test_resolve_follows_redirect_chain():
+    service = AlephService()
+    service.redirections = {"a": "b", "b": "c", "c": "d"}
+    assert service.resolve("A") == "d"
+    assert service.resolve("d") == "d"
+
+
+def test_resolve_caps_hops():
+    service = AlephService()
+    service.redirections = {f"m{i}": f"m{i + 1}" for i in range(10)}
+    assert service.resolve("m0") == "m5"
+
+
+def test_resolve_cycle_terminates():
+    service = AlephService()
+    service.redirections = {"a": "b", "b": "a"}
+    assert service.resolve("a") in {"a", "b"}
