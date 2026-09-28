@@ -77,3 +77,20 @@ def test_body_size_limit_defaults_and_env(monkeypatch):
 
     monkeypatch.setenv("MAX_BODY_SIZE_MB", "25")
     assert _Config().MAX_BODY_SIZE_MB == 25
+
+
+def test_tier_model_allowlist_defaults_to_empty(monkeypatch):
+    monkeypatch.setenv("TIER_MODEL_ALLOWLIST", "")
+    assert _Config().TIER_MODEL_ALLOWLIST == {}
+
+
+def test_tier_model_allowlist_parsed_and_lowercased(monkeypatch):
+    monkeypatch.setenv("TIER_MODEL_ALLOWLIST", '{"LiberClaw:Free": ["Qwen3.6-35B-A3B", "search/*"]}')
+    assert _Config().TIER_MODEL_ALLOWLIST == {"liberclaw:free": ["qwen3.6-35b-a3b", "search/*"]}
+
+
+@pytest.mark.parametrize("raw", ["{not json", '["a"]', '{"liberclaw:free": "qwen"}', '{"liberclaw:free": [1]}'])
+def test_tier_model_allowlist_malformed_disables_with_error(_capture_config_logs, monkeypatch, raw):
+    monkeypatch.setenv("TIER_MODEL_ALLOWLIST", raw)
+    assert _Config().TIER_MODEL_ALLOWLIST == {}
+    assert any("TIER_MODEL_ALLOWLIST" in record.message for record in _capture_config_logs.records)

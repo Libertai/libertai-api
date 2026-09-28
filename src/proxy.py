@@ -35,6 +35,7 @@ from src.load_tracker import (
 from src.logger import setup_logger
 from src.ssl_trust import SSL_CONTEXT
 from src.thinking import disable_thinking, request_thinking
+from src.tier_allowlist import model_not_in_plan
 from src.x402 import x402_manager
 
 router = APIRouter(tags=["Proxy"])
@@ -271,6 +272,11 @@ async def proxy_request(
             invalid_info = keys_manager.key_invalid_info(api_key)
             if invalid_info is not None:
                 return invalid_key_response(invalid_info)
+        # Checked on the resolved model, after the 404 above: plans gate what is
+        # actually served, and unknown models keep their not-found answer.
+        plan_response = model_not_in_plan(api_key, model_name, model)
+        if plan_response is not None:
+            return plan_response
         # Boxes authenticate on Authorization, so an x-api-key-only client (any
         # Anthropic SDK) needs its key moved onto that header before forwarding.
         headers["authorization"] = f"Bearer {api_key}"
