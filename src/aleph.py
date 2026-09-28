@@ -3,14 +3,13 @@ import time
 
 import httpx
 
+from src.config import config
 from src.logger import setup_logger
 from src.redis_client import get_redis, k
 
 logger = setup_logger(__name__)
 
-ALEPH_API_URL = (
-    "https://api2.aleph.im/api/v0/aggregates/0xe1F7220D201C64871Cefb25320a8a588393eE508.json?keys=LTAI_PRICING"
-)
+ALEPH_API_URL = f"https://api2.aleph.im/api/v0/aggregates/{config.ALEPH_AGGREGATE_ADDRESS}.json?keys=LTAI_PRICING"
 
 REDIS_KEY = k("aleph", "snapshot")
 
