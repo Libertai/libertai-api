@@ -14,6 +14,11 @@ Usage:
 Requires ALEPH_SENDER_PRIVATE_KEY in the environment; the account must own the
 LTAI_PRICING aggregate (ALEPH_AGGREGATE_ADDRESS, defaulting to the address
 src/aleph.py reads).
+
+The fetch-modify-publish window is last-write-wins on Aleph: a concurrent
+aggregate update published between the fetch and the publish is clobbered
+(fine for a single-operator tool). The verification loop only confirms this
+script's own change, not that the rest of the content survived the window.
 """
 
 from __future__ import annotations
@@ -28,6 +33,8 @@ from aleph.sdk.chains.ethereum import ETHAccount
 from aleph.sdk.client import AuthenticatedAlephHttpClient
 from dotenv import load_dotenv
 
+# Duplicates the default in src/config.py: scripts/ (not the repo root) is on
+# sys.path here, so importing src.config would fail.
 AGGREGATE_ADDRESS = "0x238224C744F4b90b4494516e074D2676ECfC6803"
 AGGREGATE_KEY = "LTAI_PRICING"
 AGGREGATE_CHANNEL = "ALEPH-CLOUDSOLUTIONS"
