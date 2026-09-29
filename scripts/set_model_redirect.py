@@ -28,7 +28,7 @@ from aleph.sdk.chains.ethereum import ETHAccount
 from aleph.sdk.client import AuthenticatedAlephHttpClient
 from dotenv import load_dotenv
 
-AGGREGATE_ADDRESS = "0x00E17972ad2f29c2b818cAe6a1D18Cab668C3bD4"
+AGGREGATE_ADDRESS = "0x238224C744F4b90b4494516e074D2676ECfC6803"
 AGGREGATE_KEY = "LTAI_PRICING"
 AGGREGATE_CHANNEL = "ALEPH-CLOUDSOLUTIONS"
 DEFAULT_DESCRIPTION = "Temporary redirection"

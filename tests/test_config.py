@@ -81,7 +81,7 @@ def test_body_size_limit_defaults_and_env(monkeypatch):
 
 def test_aleph_aggregate_address_defaults_and_env(monkeypatch):
     monkeypatch.setenv("ALEPH_AGGREGATE_ADDRESS", "")
-    assert _Config().ALEPH_AGGREGATE_ADDRESS == "0x00E17972ad2f29c2b818cAe6a1D18Cab668C3bD4"
+    assert _Config().ALEPH_AGGREGATE_ADDRESS == "0x238224C744F4b90b4494516e074D2676ECfC6803"
 
     monkeypatch.setenv("ALEPH_AGGREGATE_ADDRESS", "0xe1F7220D201C64871Cefb25320a8a588393eE508")
     assert _Config().ALEPH_AGGREGATE_ADDRESS == "0xe1F7220D201C64871Cefb25320a8a588393eE508"
