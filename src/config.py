@@ -32,6 +32,7 @@ class _Config:
     PUBLIC_BASE_URL: str
     THIRDWEB_VAULT_ACCESS_TOKEN: str
     ALEPH_SENDER_PRIVATE_KEY: str
+    ALEPH_AGGREGATE_ADDRESS: str
     REDIS_URL: str
     SEARCH_SERVICE_URL: str
     FREE_SOFT_LOAD: int
@@ -56,6 +57,13 @@ class _Config:
         self.PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
         self.THIRDWEB_VAULT_ACCESS_TOKEN = os.getenv("THIRDWEB_VAULT_ACCESS_TOKEN", "")
         self.ALEPH_SENDER_PRIVATE_KEY = os.getenv("ALEPH_SENDER_PRIVATE_KEY", "")
+        # The Aleph aggregate holding LTAI_PRICING (models metadata + redirections),
+        # read by src/aleph.py and published by scripts/set_model_redirect.py.
+        # Blank or whitespace-only is treated like unset so an empty .env value
+        # can't break the fetch.
+        self.ALEPH_AGGREGATE_ADDRESS = (
+            os.getenv("ALEPH_AGGREGATE_ADDRESS", "").strip() or "0x238224C744F4b90b4494516e074D2676ECfC6803"
+        )
         self.REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
         self.SEARCH_SERVICE_URL = os.getenv("SEARCH_SERVICE_URL", "https://search.libertai.io").rstrip("/")
 
