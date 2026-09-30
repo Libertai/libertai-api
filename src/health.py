@@ -4,6 +4,7 @@ from http import HTTPStatus
 
 import httpx
 
+from src import tee
 from src.config import config
 from src.logger import setup_logger
 from src.redis_client import get_redis, k
@@ -21,6 +22,7 @@ client = httpx.AsyncClient(timeout=30.0, verify=SSL_CONTEXT, limits=limits)
 
 async def close_http_client() -> None:
     await client.aclose()
+    await tee.close_all()
 
 
 class ServerMetrics:
@@ -115,8 +117,9 @@ class ServerHealthMonitor:
             ServerMetrics object with health status and load information
         """
         try:
-            health_url = f"{url}/health/{model}"
-            response = await client.get(health_url)
+            base, http = await tee.target(url, client)
+            health_url = f"{base}/health/{model}"
+            response = await http.get(health_url)
             if response.status_code == HTTPStatus.OK:
                 return ServerMetrics(is_healthy=True, is_loaded=True)
             elif response.status_code == HTTPStatus.ACCEPTED:
@@ -125,7 +128,15 @@ class ServerHealthMonitor:
                 logger.warning(f"Health status error for {url}: {response.status_code}")
                 return ServerMetrics(is_healthy=False, is_loaded=False)
         except (httpx.HTTPError, ValueError) as e:
+            # A rebooted enclave answers on a new port with a new certificate,
+            # so what was proved no longer applies: verify it again next check.
+            await tee.invalidate(url)
             logger.warning(f"Health check error for {url}: {type(e).__name__}: {e or 'No error message'}")
+            return ServerMetrics(is_healthy=False, is_loaded=False)
+        except RuntimeError as e:
+            # Verification failed, or the package that does it is missing.
+            await tee.invalidate(url)
+            logger.warning(f"Health check error for {url}: {e}")
             return ServerMetrics(is_healthy=False, is_loaded=False)
 
     async def check_all_servers(self) -> None:

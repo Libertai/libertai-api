@@ -3,6 +3,7 @@ from typing import ClassVar
 
 import httpx
 
+from src import tee
 from src.config import config
 from src.cryptography import create_signed_payload
 from src.logger import setup_logger
@@ -130,10 +131,7 @@ async def distribute_keys_to_clients():
     """
     Distribute encrypted API keys to all client servers configured in MODELS.
     """
-    client_endpoints = set()
-    for servers in config.MODELS.values():
-        for server in servers:
-            client_endpoints.add(f"{server}/libertai/api-keys")
+    servers = {server for servers in config.MODELS.values() for server in servers}
 
     keys_manager = KeysManager()
     keys_list = list(keys_manager.keys)
@@ -146,16 +144,25 @@ async def distribute_keys_to_clients():
         )
         payload = {"encrypted_payload": signed_payload}
 
-        for endpoint in client_endpoints:
+        for server in sorted(servers):
             try:
-                response = await client.post(endpoint, json=payload)
+                # A tee:// server is proved before anything is sent to it. The
+                # payload is signed but not encrypted, so an unverified peer
+                # would be handed the key list in cleartext.
+                base, http = await tee.target(server, client)
+                endpoint = f"{base}/libertai/api-keys"
+                response = await http.post(endpoint, json=payload)
                 if response.status_code != 200:
                     logger.error(f"Error sending keys to {endpoint}: {response.status_code} - {response.text}")
             except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException, httpx.ProxyError) as e:
-                # Transient: upstream box slow/unreachable — other endpoints still get their keys
-                logger.warning(f"Could not send keys to {endpoint}: {type(e).__name__}: {e}")
+                # Transient: upstream box slow/unreachable — other endpoints still get their keys.
+                # For an enclave this is also what a reboot looks like, so drop
+                # what was proved and verify again next round.
+                await tee.invalidate(server)
+                logger.warning(f"Could not send keys to {server}: {type(e).__name__}: {e}")
             except Exception as e:
-                logger.error(f"Exception sending keys to {endpoint}: {e}", exc_info=True)
+                await tee.invalidate(server)
+                logger.error(f"Exception sending keys to {server}: {e}", exc_info=True)
 
     except Exception as e:
         logger.error(f"Error creating signed payload: {e}", exc_info=True)
