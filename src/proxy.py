@@ -10,6 +10,7 @@ from fastapi import APIRouter, Cookie, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from src import tee
 from src.aleph import aleph_service
 from src.api_keys import KeysManager
 from src.auth import extract_api_key
@@ -365,11 +366,19 @@ async def proxy_request(
         f"preferred={'yes' if preferred_server and preferred_server in servers_to_try else 'no'}"
     )
 
-    last_error = None
+    last_error: Exception | None = None
 
     # Try each server with automatic failover
     for attempt, server in enumerate(servers_to_try, 1):
-        url = f"{server}/{full_path}"
+        # `server` stays the identity used for load bookkeeping: a tee:// entry
+        # keeps the same name across reboots, while its address does not.
+        try:
+            base, http = await tee.target(server, client)
+        except RuntimeError as e:
+            logger.warning(f"Skipping {server} (attempt {attempt}/{len(servers_to_try)}): {e}")
+            last_error = e
+            continue
+        url = f"{base}/{full_path}"
 
         # Release is best-effort (cancelled cleanup, uncancelled non-streaming
         # disconnects, killed process) — the lease deadline is the real leak guard.
@@ -377,10 +386,10 @@ async def proxy_request(
         owned = False
         try:
             logger.debug(f"Attempt {attempt}/{len(servers_to_try)}: Forwarding to {url}")
-            req = client.build_request("POST", url, content=body, headers=headers, params=request.query_params)
+            req = http.build_request("POST", url, content=body, headers=headers, params=request.query_params)
             await load_acquire(server, request_id)
             owned = True
-            response = await client.send(req, stream=True)
+            response = await http.send(req, stream=True)
 
             # Retry on server errors (5xx) — upstream is broken, try next server
             if response.status_code >= 500:
@@ -475,7 +484,10 @@ async def proxy_request(
                 )
 
         except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException, httpx.ProxyError) as e:
-            # Connection error (incl. upstream HTTP-proxy failures) - try next server
+            # Connection error (incl. upstream HTTP-proxy failures) - try next server.
+            # For an enclave this is also what a reboot looks like, so drop what
+            # was proved: the new boot serves a new certificate on a new port.
+            await tee.invalidate(server)
             logger.warning(
                 f"Connection failed to {url} (attempt {attempt}/{len(servers_to_try)}): {type(e).__name__}: {e}"
             )
