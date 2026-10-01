@@ -391,6 +391,22 @@ async def proxy_request(
                 last_error = Exception(f"HTTP {response.status_code} from {server}")
                 continue
 
+            # A box only knows the keys libertai-api last pushed to it, and loses them
+            # on restart. A 401 for a key valid here is that box lagging, not the client.
+            if (
+                response.status_code == HTTPStatus.UNAUTHORIZED
+                and api_key
+                and keys_manager.key_exists(api_key)
+                and attempt < len(servers_to_try)
+            ):
+                await response.aclose()
+                logger.warning(
+                    f"401 for a valid key from {url} (attempt {attempt}/{len(servers_to_try)}); "
+                    f"box keys out of sync, retrying on another server"
+                )
+                last_error = Exception(f"HTTP 401 from {server}")
+                continue
+
             # Replicas run different --max-model-len, so a prompt one refuses for length
             # can still fit on a larger one. The body is small and the response ends here
             # either way, so read it eagerly to classify.

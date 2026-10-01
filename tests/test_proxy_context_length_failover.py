@@ -133,3 +133,59 @@ def test_other_400s_are_returned_without_retrying(monkeypatch):
     assert tried == ["small"]
     assert resp.status_code == 400
     assert resp.json()["error"]["message"] == "unknown field: temperatur"
+
+
+_BOX_401 = b'{"detail":"Invalid API key"}'
+
+
+def test_box_401_for_a_valid_key_fails_over(monkeypatch):
+    # A box that has not received the key list yet must not fail a key we know is valid.
+    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
+    tried = _responder(
+        monkeypatch,
+        {
+            "small": _streamed(401, _BOX_401),
+            "large": _streamed(200, b'{"ok":true}'),
+        },
+    )
+
+    resp = _post()
+
+    assert tried == ["small", "large"]
+    assert resp.status_code == 200
+
+
+def test_box_401_for_an_unknown_key_is_returned(monkeypatch):
+    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
+    tried = _responder(
+        monkeypatch,
+        {
+            "small": _streamed(401, _BOX_401),
+            "large": _streamed(200, b'{"ok":true}'),
+        },
+    )
+
+    resp = _client().post(
+        "/v1/chat/completions",
+        json={"model": "m", "messages": [{"role": "user", "content": "hi"}]},
+        headers={"Authorization": "Bearer unknown"},
+    )
+
+    assert tried == ["small"]
+    assert resp.status_code == 401
+
+
+def test_last_server_401_reaches_the_client(monkeypatch):
+    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
+    tried = _responder(
+        monkeypatch,
+        {
+            "small": _streamed(401, _BOX_401),
+            "large": _streamed(401, _BOX_401),
+        },
+    )
+
+    resp = _post()
+
+    assert tried == ["small", "large"]
+    assert resp.status_code == 401
