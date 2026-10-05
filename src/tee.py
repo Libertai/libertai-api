@@ -15,11 +15,11 @@ Skipping verification instead is not an option: `create_signed_payload` signs
 the API key list but does not encrypt it, so it travels as cleartext inside
 TLS. An endpoint that cannot be proved therefore gets no request at all.
 
-Verification lives in `libertai-confidential-inference`, which is not declared
-in pyproject: it is not on an index yet, so declaring it would leave
-`poetry.lock` unresolvable. A deployment that configures a `tee://` entry
-installs it alongside, and until then the import below stays inert and such an
-entry is refused rather than contacted.
+Verification lives in `libertai-confidential-inference`, the same package a
+client installs to verify this deployment -- so the proxy runs the checks its
+users run, rather than a second implementation that could drift. The import is
+still guarded: without the package a `tee://` entry is refused rather than
+contacted.
 """
 
 from __future__ import annotations
