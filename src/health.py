@@ -133,10 +133,12 @@ class ServerHealthMonitor:
             await tee.invalidate(url)
             logger.warning(f"Health check error for {url}: {type(e).__name__}: {e or 'No error message'}")
             return ServerMetrics(is_healthy=False, is_loaded=False)
-        except RuntimeError as e:
-            # Verification failed, or the package that does it is missing.
+        except Exception as e:
+            # Anything else: verification failed, or the package that does it is
+            # missing. One unreachable server must not abort the sweep, so this
+            # is deliberately broad.
             await tee.invalidate(url)
-            logger.warning(f"Health check error for {url}: {e}")
+            logger.warning(f"Health check error for {url}: {type(e).__name__}: {e}")
             return ServerMetrics(is_healthy=False, is_loaded=False)
 
     async def check_all_servers(self) -> None:
@@ -149,11 +151,17 @@ class ServerHealthMonitor:
             tasks = [self.check_server_metrics_async(url, model) for url in urls]
 
             if tasks:
-                results = await asyncio.gather(*tasks)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
                 for i, url in enumerate(urls):
                     if i < len(results):
                         metrics = results[i]
+                        if isinstance(metrics, BaseException):
+                            # Never let one server's failure drop the snapshot
+                            # for every model: the publish below is what all
+                            # the other replicas read.
+                            logger.warning(f"Health check raised for {url}: {metrics!r}")
+                            metrics = ServerMetrics(is_healthy=False, is_loaded=False)
                         new_server_metrics[url] = metrics
                         if metrics.is_loaded:
                             new_healthy_model_urls[model].append(url)

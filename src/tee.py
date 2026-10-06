@@ -65,7 +65,15 @@ def _verify(hash_: str) -> tuple[str, httpx.AsyncClient]:
     Runs off the event loop: resolving the deployment and fetching the VCEK are
     blocking calls.
     """
-    deployment = resolve_deployment(hash_)
+    try:
+        deployment = resolve_deployment(hash_)
+    except Exception as e:
+        # The package raises its own exception types, which derive from
+        # Exception and nothing narrower. Callers of this module handle
+        # RuntimeError, so anything else escaping here would abort a whole
+        # health sweep rather than marking one endpoint down.
+        raise RuntimeError(f"cannot resolve {hash_[:12]}: {type(e).__name__}: {e}") from e
+
     failures = []
     for origin in deployment.candidates:
         try:
