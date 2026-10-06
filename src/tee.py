@@ -88,7 +88,11 @@ def _verify(hash_: str) -> tuple[str, httpx.AsyncClient]:
         # restarted enclave -- which mints a new one -- fails here and is
         # re-verified rather than silently trusted.
         limits = httpx.Limits(max_connections=64, max_keepalive_connections=32, keepalive_expiry=300.0)
-        return origin, httpx.AsyncClient(verify=context, timeout=30.0, limits=limits)
+        # trust_env=False keeps this off HTTP_PROXY: the node forwards a fresh
+        # host port on every boot, and the proxy only tunnels CONNECT to ports
+        # on its allow-list. Nothing is lost by going direct, since the context
+        # already pins the certificate that was attested.
+        return origin, httpx.AsyncClient(verify=context, timeout=30.0, limits=limits, trust_env=False)
     raise RuntimeError(f"no attested endpoint for {hash_[:12]}: {'; '.join(failures)}")
 
 
