@@ -500,20 +500,77 @@ def test_rejection_logging_is_throttled(monkeypatch, caplog):
     # setup_logger sets propagate=False, so records only reach caplog depending
     # on the pytest version — force propagation for this test.
     monkeypatch.setattr(logging.getLogger("src.proxy"), "propagate", True)
-    monkeypatch.setattr(proxy, "_reject_log_state", {"last": 0.0, "suppressed": 0})
+    monkeypatch.setattr(proxy, "_reject_log_state", {})
     clock = [1e9]
     monkeypatch.setattr(proxy, "_monotonic", lambda: clock[0])
 
-    proxy._log_rejection("m", 60)
-    proxy._log_rejection("m", 61)
+    proxy._log_rejection("m", "m", 60)
+    proxy._log_rejection("m", "m", 61)
     clock[0] += proxy.FREE_REJECT_LOG_INTERVAL + 1
-    proxy._log_rejection("m", 62)
+    proxy._log_rejection("m", "m", 62)
 
     # pytest attaches capture handlers at multiple scopes, so a propagated
     # record can be captured twice — dedupe by message.
     messages = {record.message for record in caplog.records if "rejected at hard load" in record.message}
     assert len(messages) == 2
     assert any("+1 more since last log" in message for message in messages)
+
+
+def test_rejection_logging_throttle_is_per_model(monkeypatch, caplog):
+    # The throttle state is keyed by model: a rejection burst on one model must
+    # not suppress the warnings of another model sharing the interval.
+    import logging
+
+    # setup_logger sets propagate=False, so records only reach caplog depending
+    # on the pytest version — force propagation for this test.
+    monkeypatch.setattr(logging.getLogger("src.proxy"), "propagate", True)
+    monkeypatch.setattr(proxy, "_reject_log_state", {})
+    clock = [1e9]
+    monkeypatch.setattr(proxy, "_monotonic", lambda: clock[0])
+
+    proxy._log_rejection("m", "m", 60)
+    proxy._log_rejection("other", "other", 61)
+
+    messages = {record.message for record in caplog.records if "rejected at hard load" in record.message}
+    assert len(messages) == 2
+    assert any("'m'" in message for message in messages)
+    assert any("'other'" in message for message in messages)
+
+
+def test_rejection_logging_throttle_keys_on_resolved_model(monkeypatch, caplog):
+    # The throttle is keyed on the resolved model name, not the client-supplied
+    # spelling: casing variants of one configured model share a single throttle
+    # entry instead of growing one per spelling.
+    import logging
+
+    monkeypatch.setattr(logging.getLogger("src.proxy"), "propagate", True)
+    monkeypatch.setattr(proxy, "_reject_log_state", {})
+    clock = [1e9]
+    monkeypatch.setattr(proxy, "_monotonic", lambda: clock[0])
+
+    proxy._log_rejection("gpt-4o", "GPT-4o", 60)
+    proxy._log_rejection("gpt-4o", "gpt-4o", 61)
+
+    messages = {record.message for record in caplog.records if "rejected at hard load" in record.message}
+    assert len(messages) == 1
+    assert any("'GPT-4o'" in message for message in messages)
+    assert len(proxy._reject_log_state) == 1
+
+
+def test_non_string_tier_value_fails_open(monkeypatch):
+    # A tier value that isn't a string must not 500 the request: the linchpin
+    # comparison stringifies the lookup and fails open like any unknown tier.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 50}])
+    KeysManager().keys = {"weird"}
+    KeysManager().tiers = {"weird": 123}
+
+    resp = _post_with_key("weird")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "All servers unavailable for model m"
+    assert len(sends) == 1
 
 
 def test_unknown_tier_key_bypasses_the_gate(monkeypatch):
