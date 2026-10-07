@@ -60,20 +60,21 @@ def _pool_load(model: str, loads: dict[str, int]) -> int:
 _sleep = asyncio.sleep
 _monotonic = time.monotonic
 
-# Throttle state for _log_rejection: per model, last log time + rejections
-# suppressed since. Keyed by model so a burst on one model cannot hide another
-# model's warnings; entries are bounded by the configured model set.
+# Throttle state for _log_rejection: per resolved model, last log time +
+# rejections suppressed since. Keyed on the configured model name (not the
+# client-supplied spelling) so a burst on one model cannot hide another model's
+# warnings or grow an unbounded entry per casing variant.
 _reject_log_state: dict[str, dict[str, float]] = {}
 
 
-def _log_rejection(model_name: str, pool_load: int) -> None:
+def _log_rejection(model: str, model_name: str, pool_load: int) -> None:
     """Warning-log a hard-load rejection at most once per interval, per model.
 
     Shedding is expected behavior under load, so a burst would otherwise produce
     one warning line per request; suppressed rejections are counted into the
-    next line.
+    next line. bound by the configured model set via the resolved `model` key.
     """
-    state = _reject_log_state.setdefault(model_name, {"last": 0.0, "suppressed": 0})
+    state = _reject_log_state.setdefault(model, {"last": 0.0, "suppressed": 0})
     now = _monotonic()
     if now - state["last"] < FREE_REJECT_LOG_INTERVAL:
         state["suppressed"] += 1
@@ -88,8 +89,8 @@ def _log_rejection(model_name: str, pool_load: int) -> None:
     )
 
 
-def _reject_overloaded(model_name: str, pool_load: int) -> JSONResponse:
-    _log_rejection(model_name, pool_load)
+def _reject_overloaded(model: str, model_name: str, pool_load: int) -> JSONResponse:
+    _log_rejection(model, model_name, pool_load)
     return model_overloaded_response(model_name)
 
 
@@ -126,7 +127,7 @@ async def _free_tier_gate(
 
     pool_load = _pool_load(model, loads)
     if pool_load >= config.FREE_HARD_LOAD:
-        return loads, _reject_overloaded(model_name, pool_load)
+        return loads, _reject_overloaded(model, model_name, pool_load)
 
     deadline = _monotonic() + FREE_GATE_MAX_WAIT
     waited = False
@@ -141,7 +142,7 @@ async def _free_tier_gate(
         loads = await get_model_loads(model)
         pool_load = _pool_load(model, loads)
         if pool_load >= config.FREE_HARD_LOAD:
-            return loads, _reject_overloaded(model_name, pool_load)
+            return loads, _reject_overloaded(model, model_name, pool_load)
     return loads, None
 
 
