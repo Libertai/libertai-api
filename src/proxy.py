@@ -119,7 +119,9 @@ async def _free_tier_gate(
     # casing drift ("Free") must not silently fail every free-tier key open.
     if api_key is None or not keys_manager.key_exists(api_key):
         return loads, None
-    if (keys_manager.tier(api_key) or "").lower() != "free":
+    # str() guards the linchpin comparison: a non-string tier value served by
+    # the backend must fail the request open, not raise out of .lower().
+    if str(keys_manager.tier(api_key) or "").lower() != "free":
         return loads, None
 
     pool_load = _pool_load(model, loads)

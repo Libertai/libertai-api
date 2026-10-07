@@ -537,6 +537,22 @@ def test_rejection_logging_throttle_is_per_model(monkeypatch, caplog):
     assert any("'other'" in message for message in messages)
 
 
+def test_non_string_tier_value_fails_open(monkeypatch):
+    # A tier value that isn't a string must not 500 the request: the linchpin
+    # comparison stringifies the lookup and fails open like any unknown tier.
+    monkeypatch.setattr(proxy.config, "FREE_SOFT_LOAD", 25)
+    monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
+    sends = _stub_forwarding(monkeypatch, [{"http://up": 50}])
+    KeysManager().keys = {"weird"}
+    KeysManager().tiers = {"weird": 123}
+
+    resp = _post_with_key("weird")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "All servers unavailable for model m"
+    assert len(sends) == 1
+
+
 def test_unknown_tier_key_bypasses_the_gate(monkeypatch):
     # A valid key with no tier entry (sync skew) fails open: it reaches the
     # forwarding loop even at hard load rather than being over-shed.
