@@ -60,18 +60,20 @@ def _pool_load(model: str, loads: dict[str, int]) -> int:
 _sleep = asyncio.sleep
 _monotonic = time.monotonic
 
-# Throttle state for _log_rejection: last log time + rejections suppressed since.
-_reject_log_state = {"last": 0.0, "suppressed": 0}
+# Throttle state for _log_rejection: per model, last log time + rejections
+# suppressed since. Keyed by model so a burst on one model cannot hide another
+# model's warnings; entries are bounded by the configured model set.
+_reject_log_state: dict[str, dict[str, float]] = {}
 
 
 def _log_rejection(model_name: str, pool_load: int) -> None:
-    """Warning-log a hard-load rejection at most once per interval.
+    """Warning-log a hard-load rejection at most once per interval, per model.
 
     Shedding is expected behavior under load, so a burst would otherwise produce
     one warning line per request; suppressed rejections are counted into the
     next line.
     """
-    state = _reject_log_state
+    state = _reject_log_state.setdefault(model_name, {"last": 0.0, "suppressed": 0})
     now = _monotonic()
     if now - state["last"] < FREE_REJECT_LOG_INTERVAL:
         state["suppressed"] += 1

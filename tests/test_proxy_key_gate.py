@@ -500,7 +500,7 @@ def test_rejection_logging_is_throttled(monkeypatch, caplog):
     # setup_logger sets propagate=False, so records only reach caplog depending
     # on the pytest version — force propagation for this test.
     monkeypatch.setattr(logging.getLogger("src.proxy"), "propagate", True)
-    monkeypatch.setattr(proxy, "_reject_log_state", {"last": 0.0, "suppressed": 0})
+    monkeypatch.setattr(proxy, "_reject_log_state", {})
     clock = [1e9]
     monkeypatch.setattr(proxy, "_monotonic", lambda: clock[0])
 
@@ -514,6 +514,27 @@ def test_rejection_logging_is_throttled(monkeypatch, caplog):
     messages = {record.message for record in caplog.records if "rejected at hard load" in record.message}
     assert len(messages) == 2
     assert any("+1 more since last log" in message for message in messages)
+
+
+def test_rejection_logging_throttle_is_per_model(monkeypatch, caplog):
+    # The throttle state is keyed by model: a rejection burst on one model must
+    # not suppress the warnings of another model sharing the interval.
+    import logging
+
+    # setup_logger sets propagate=False, so records only reach caplog depending
+    # on the pytest version — force propagation for this test.
+    monkeypatch.setattr(logging.getLogger("src.proxy"), "propagate", True)
+    monkeypatch.setattr(proxy, "_reject_log_state", {})
+    clock = [1e9]
+    monkeypatch.setattr(proxy, "_monotonic", lambda: clock[0])
+
+    proxy._log_rejection("m", 60)
+    proxy._log_rejection("other", 61)
+
+    messages = {record.message for record in caplog.records if "rejected at hard load" in record.message}
+    assert len(messages) == 2
+    assert any("'m'" in message for message in messages)
+    assert any("'other'" in message for message in messages)
 
 
 def test_unknown_tier_key_bypasses_the_gate(monkeypatch):
