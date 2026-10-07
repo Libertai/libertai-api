@@ -72,7 +72,8 @@ def _log_rejection(model: str, model_name: str, pool_load: int) -> None:
 
     Shedding is expected behavior under load, so a burst would otherwise produce
     one warning line per request; suppressed rejections are counted into the
-    next line. bound by the configured model set via the resolved `model` key.
+    next line, with the state bounded by the configured model set via the
+    resolved model key.
     """
     state = _reject_log_state.setdefault(model, {"last": 0.0, "suppressed": 0})
     now = _monotonic()
