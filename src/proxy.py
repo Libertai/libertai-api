@@ -64,7 +64,7 @@ _monotonic = time.monotonic
 # rejections suppressed since. Keyed on the configured model name (not the
 # client-supplied spelling) so a burst on one model cannot hide another model's
 # warnings or grow an unbounded entry per casing variant.
-_reject_log_state: dict[str, dict[str, float]] = {}
+_reject_log_state: dict[str, dict[str, float | int]] = {}
 
 
 def _log_rejection(model: str, model_name: str, pool_load: int) -> None:
