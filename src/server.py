@@ -28,6 +28,7 @@ from src.health import close_http_client as close_health_http_client
 from src.health import server_health_monitor
 from src.leader import leader
 from src.logger import setup_logger
+from src.metrics import MetricsMiddleware
 from src.model import router as model_router
 from src.proxy import close_http_client
 from src.proxy import router as proxy_router
@@ -213,6 +214,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Outermost: /metrics is intercepted here (token-gated, outside the OpenAPI
+# routes) before CORS or the body cap run, and every other request is timed.
+app.add_middleware(MetricsMiddleware)
 
 
 @app.get("/health")

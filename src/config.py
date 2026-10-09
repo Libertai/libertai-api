@@ -38,6 +38,7 @@ class _Config:
     FREE_SOFT_LOAD: int
     FREE_HARD_LOAD: int
     MAX_BODY_SIZE_MB: int
+    METRICS_TOKEN: str
 
     LOG_LEVEL: int
 
@@ -89,6 +90,10 @@ class _Config:
         # entire body in memory, so an uncapped upload is a memory-exhaustion
         # vector. 0 or negative disables the cap.
         self.MAX_BODY_SIZE_MB = _int_env("MAX_BODY_SIZE_MB", 100)
+
+        # Token required to scrape /metrics (?token=...). Metrics expose business
+        # behavior, so the endpoint stays locked (401) until this is configured.
+        self.METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
