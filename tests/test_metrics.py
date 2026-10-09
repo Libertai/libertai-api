@@ -88,6 +88,21 @@ def test_metrics_rejects_missing_or_wrong_token(monkeypatch):
     assert client.get("/metrics", params={"token": "wrong"}).status_code == 401
 
 
+def test_metrics_rejects_non_ascii_token_without_500(monkeypatch):
+    # hmac.compare_digest raises TypeError on non-ASCII str; a client-controlled
+    # token must 401, never bubble into a 500.
+    monkeypatch.setattr(config, "METRICS_TOKEN", TOKEN)
+    resp = _client().get("/metrics", params={"token": "%C3%A9"})
+    assert resp.status_code == 401
+
+
+def test_metrics_accepts_bearer_token(monkeypatch):
+    monkeypatch.setattr(config, "METRICS_TOKEN", TOKEN)
+    client = _client()
+    assert client.get("/metrics", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
+    assert client.get("/metrics", headers={"Authorization": "Bearer "}).status_code == 401
+
+
 def test_metrics_not_exposed_in_openapi_docs():
     resp = _client().get("/openapi.json")
     assert resp.status_code == 200
@@ -147,3 +162,55 @@ def test_admitted_request_counts_upstream_failure(monkeypatch, _reset_keys_manag
     text = _scrape(monkeypatch)
     assert 'libertai_requests_total{model="m",tier="paid"}' in text
     assert 'libertai_upstream_failures_total{model="m",server="http://up"}' in text
+
+
+def test_soft_load_wait_and_upstream_success_metrics(monkeypatch, _reset_keys_manager):
+    # A free key between the soft and hard thresholds waits once, then reaches a
+    # successful upstream: both the gate-wait and the upstream-time histograms
+    # get an observation for this model.
+    _gate_thresholds(monkeypatch)
+    monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
+    monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
+
+    loads_seq = iter([{"http://up": 30}, {"http://up": 0}])
+
+    async def _loads(_model):
+        try:
+            return next(loads_seq)
+        except StopIteration:
+            return {"http://up": 0}
+
+    async def _noop(*args, **kwargs):
+        return None
+
+    async def _no_sleep(seconds):
+        pass
+
+    async def _chunks():
+        yield b'{"ok": true}'
+
+    async def _ok(req, **kwargs):
+        resp = httpx.Response(200, content=_chunks(), headers={"Content-Type": "application/json"})
+        resp.request = req
+        return resp
+
+    monkeypatch.setattr(proxy, "get_model_loads", _loads)
+    monkeypatch.setattr(proxy, "load_acquire", _noop)
+    monkeypatch.setattr(proxy, "load_release", _noop)
+    monkeypatch.setattr(proxy, "_sleep", _no_sleep)
+    monkeypatch.setattr(proxy.client, "send", _ok)
+
+    KeysManager().keys = {"free"}
+    KeysManager().tiers = {"free": "free"}
+
+    resp = _post_with_key("free")
+
+    assert resp.status_code == 200
+
+    text = _scrape(monkeypatch)
+    wait_lines = [line for line in text.splitlines() if line.startswith("libertai_gate_wait_seconds_bucket")]
+    assert any('model="m"' in line for line in wait_lines)
+    upstream_lines = [
+        line for line in text.splitlines() if line.startswith("libertai_upstream_request_duration_seconds_bucket")
+    ]
+    assert any('model="m"' in line for line in upstream_lines)

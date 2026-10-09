@@ -70,6 +70,8 @@ upstream_request_duration_seconds = Histogram(
 _ENDPOINT_BY_PATH = {
     "/v1/chat/completions": "chat_completions",
     "/v1/completions": "completions",
+    "/v1/messages": "messages",
+    "/v1/responses": "responses",
     "/openrouter/v1/chat/completions": "openrouter_chat",
     "/openrouter/chat/completions": "openrouter_chat",
     "/openrouter/v1/completions": "openrouter_completions",
@@ -118,25 +120,32 @@ class MetricsMiddleware:
         # Starlette's exception middleware always emits a response, but default
         # to 0 so an unset status can't masquerade as a real code.
         status = 0
+        duration_observed = False
 
         async def wrapped_send(message: Message) -> None:
-            nonlocal status
+            nonlocal status, duration_observed
             if message["type"] == "http.response.start":
                 status = message["status"]
+                # Observe on response start, not completion: streaming responses
+                # (chat completions) can stream for minutes, and this histogram
+                # documents time to the first response bytes.
+                http_request_duration_seconds.labels(endpoint, method).observe(time.monotonic() - start)
+                duration_observed = True
             await send(message)
 
         try:
             await self.app(scope, receive, wrapped_send)
         finally:
             http_requests_total.labels(endpoint, method, str(status)).inc()
-            http_request_duration_seconds.labels(endpoint, method).observe(time.monotonic() - start)
+            if not duration_observed:
+                http_request_duration_seconds.labels(endpoint, method).observe(time.monotonic() - start)
 
     async def _serve_metrics(self, scope: Scope, receive: Receive, send: Send) -> None:
         token = config.METRICS_TOKEN
         response: Response
         if not token:
             response = JSONResponse(status_code=401, content={"detail": "metrics not configured"})
-        elif not hmac.compare_digest(Request(scope).query_params.get("token", ""), token):
+        elif not _token_matches(Request(scope), token):
             response = JSONResponse(status_code=401, content={"detail": "invalid token"})
         else:
             response = Response(
@@ -144,3 +153,20 @@ class MetricsMiddleware:
                 media_type="text/plain; version=0.0.4; charset=utf-8",
             )
         await response(scope, receive, send)
+
+
+def _token_matches(request: Request, token: str) -> bool:
+    """Constant-time compare of the token from ?token= or an Authorization header.
+
+    hmac.compare_digest raises TypeError on non-ASCII str (a client-controlled
+    value must never be able to 500 the endpoint), so both sides are compared
+    as UTF-8 bytes.
+    """
+    provided = request.query_params.get("token")
+    if not provided:
+        authorization = request.headers.get("authorization", "")
+        if authorization.lower().startswith("bearer "):
+            provided = authorization[7:]
+    if not provided:
+        return False
+    return hmac.compare_digest(provided.encode("utf-8"), token.encode("utf-8"))
