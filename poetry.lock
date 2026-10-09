@@ -1911,18 +1911,18 @@ docs = ["sphinx (>=8.1.3,<8.2.0)", "sphinx-autobuild (>=2024.10.3,<2024.11.0)", 
 
 [[package]]
 name = "libertai-confidential-inference"
-version = "0.0.1"
+version = "0.1.0"
 description = "Verify you are talking to LibertAI inference running in an attested confidential VM, then talk to it directly."
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "libertai_confidential_inference-0.0.1-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:3fb7f1b8409030da7989816f52f2d8775fbb5f2c1beade54000332e890507594"},
-    {file = "libertai_confidential_inference-0.0.1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:b877f79bbbd337f113c0f43db0f59739be1d9f987a1e458b876b9a8eecc9643d"},
-    {file = "libertai_confidential_inference-0.0.1-cp39-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:9c9c20934e11f9ac15b1635086ce708bc6954885dd322089571768dd057150e7"},
-    {file = "libertai_confidential_inference-0.0.1-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:29cccd66dd5a17155b17c3f8ec8cdabc7fc1db2e1192a9d1e3dfb0c8e028ecbd"},
-    {file = "libertai_confidential_inference-0.0.1-cp39-abi3-win_amd64.whl", hash = "sha256:5d49ac10bc7e95df70118572e31a6a0ed305db45d627e7615070448f6e5b5045"},
-    {file = "libertai_confidential_inference-0.0.1.tar.gz", hash = "sha256:d1d0284622fbab6e09ba6c04053e9fa4a4ddf323f2ee75e6aa066f3c0c65a680"},
+    {file = "libertai_confidential_inference-0.1.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:b0b7a3fab45ea2ca4394147049f5cbc49e79510a13eb29fa2b6a2ad7ed9d0ea5"},
+    {file = "libertai_confidential_inference-0.1.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:ff30676810dbdbcf35e1863aaab2a79a6f7a24ae9adaa4e700188ad66c52d5da"},
+    {file = "libertai_confidential_inference-0.1.0-cp39-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:f22d4f5327f393b29a40261da2ecb6eef152c2eabced0d880731c92aecc5e1d9"},
+    {file = "libertai_confidential_inference-0.1.0-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:3a26920fb63ca446f668b909d7868bdeece30fcadb462501cfe0d62bb77f0223"},
+    {file = "libertai_confidential_inference-0.1.0-cp39-abi3-win_amd64.whl", hash = "sha256:a1595d9ebfee84293f882c95ad93ca00fce41cc4b10db9147665500be045fe1e"},
+    {file = "libertai_confidential_inference-0.1.0.tar.gz", hash = "sha256:7632f2e5b081ea46bd71b0abd913c245174622b2b22cfd5e7147aeb86d7a516c"},
 ]
 
 [package.dependencies]
@@ -4395,4 +4395,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "7a2387cae5686dfe756f6e346fc960af49ecd2fc1a7a733e840ff126c44d8eb8"
+content-hash = "5eff7fca28e64a58c1afdcdbc0a9e509dc3aedb3854571ca8cd9672e12a869d0"
