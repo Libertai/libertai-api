@@ -34,6 +34,13 @@ from src.load_tracker import (
     release as load_release,
 )
 from src.logger import setup_logger
+from src.metrics import (
+    gate_rejections_total,
+    gate_wait_seconds,
+    requests_total,
+    upstream_failures_total,
+    upstream_request_duration_seconds,
+)
 from src.ssl_trust import SSL_CONTEXT
 from src.thinking import disable_thinking, request_thinking
 from src.x402 import x402_manager
@@ -91,8 +98,26 @@ def _log_rejection(model: str, model_name: str, pool_load: int) -> None:
 
 
 def _reject_overloaded(model: str, model_name: str, pool_load: int) -> JSONResponse:
+    gate_rejections_total.labels(model).inc()
     _log_rejection(model, model_name, pool_load)
     return model_overloaded_response(model_name)
+
+
+def _request_tier(api_key: str | None) -> str:
+    """Classify a request for metrics and the gate: x402, unknown, free, or paid.
+
+    Mirrors the gate's membership rules: keys inside the valid set with an
+    explicit (case-insensitive) "free" tier are gated; everything else fails
+    open. "unknown" keeps sync skew observable in metrics instead of hiding it
+    among paid requests.
+    """
+    if api_key is None:
+        return "x402"
+    if not keys_manager.key_exists(api_key):
+        return "unknown"
+    if str(keys_manager.tier(api_key) or "").lower() == "free":
+        return "free"
+    return "paid"
 
 
 async def _free_tier_gate(
@@ -119,11 +144,7 @@ async def _free_tier_gate(
     # (possible only with inconsistent backend data) fails open like any other
     # unknown. The tier comparison is normalized because the gate hinges on it:
     # casing drift ("Free") must not silently fail every free-tier key open.
-    if api_key is None or not keys_manager.key_exists(api_key):
-        return loads, None
-    # str() guards the linchpin comparison: a non-string tier value served by
-    # the backend must fail the request open, not raise out of .lower().
-    if str(keys_manager.tier(api_key) or "").lower() != "free":
+    if _request_tier(api_key) != "free":
         return loads, None
 
     pool_load = _pool_load(model, loads)
@@ -131,11 +152,11 @@ async def _free_tier_gate(
         return loads, _reject_overloaded(model, model_name, pool_load)
 
     deadline = _monotonic() + FREE_GATE_MAX_WAIT
-    waited = False
+    wait_started: float | None = None
     while pool_load >= config.FREE_SOFT_LOAD and _monotonic() < deadline:
-        if not waited:
+        if wait_started is None:
+            wait_started = _monotonic()
             logger.info(f"Free-tier request to '{model_name}' waiting for pool drain under soft load")
-            waited = True
         await _sleep(FREE_GATE_POLL_INTERVAL)
         # Re-fetch only this model's servers: waiters poll every 0.5s, so the
         # per-model pipeline keeps the Redis traffic proportional to the pool
@@ -143,8 +164,16 @@ async def _free_tier_gate(
         loads = await get_model_loads(model)
         pool_load = _pool_load(model, loads)
         if pool_load >= config.FREE_HARD_LOAD:
+            _observe_gate_wait(wait_started, model)
             return loads, _reject_overloaded(model, model_name, pool_load)
+    _observe_gate_wait(wait_started, model)
     return loads, None
+
+
+def _observe_gate_wait(wait_started: float | None, model: str) -> None:
+    """Record how long a request waited in the soft-load gate."""
+    if wait_started is not None:
+        gate_wait_seconds.labels(model).observe(_monotonic() - wait_started)
 
 
 keys_manager = KeysManager()
@@ -331,6 +360,7 @@ async def proxy_request(
     # load. Paid tiers and unknown keys bypass; the possibly-refreshed snapshot
     # keeps the sorting below accurate.
     loads, gate_response = await _free_tier_gate(model, model_name, api_key, loads)
+    requests_total.labels(model, _request_tier(api_key)).inc()
     if gate_response is not None:
         return gate_response
 
@@ -373,6 +403,7 @@ async def proxy_request(
     )
 
     last_error: Exception | None = None
+    upstream_start = _monotonic()
 
     # Try each server with automatic failover
     for attempt, server in enumerate(servers_to_try, 1):
@@ -383,6 +414,7 @@ async def proxy_request(
         except RuntimeError as e:
             logger.warning(f"Skipping {server} (attempt {attempt}/{len(servers_to_try)}): {e}")
             last_error = e
+            upstream_failures_total.labels(model, server).inc()
             continue
         url = f"{base}/{full_path}"
 
@@ -404,6 +436,7 @@ async def proxy_request(
                     f"Server error {response.status_code} from {url} (attempt {attempt}/{len(servers_to_try)})"
                 )
                 last_error = Exception(f"HTTP {response.status_code} from {server}")
+                upstream_failures_total.labels(model, server).inc()
                 continue
 
             # A box only knows the keys libertai-api last pushed to it, and loses them
@@ -420,6 +453,7 @@ async def proxy_request(
                     f"box keys out of sync, retrying on another server"
                 )
                 last_error = Exception(f"HTTP 401 from {server}")
+                upstream_failures_total.labels(model, server).inc()
                 continue
 
             # Replicas run different --max-model-len, so a prompt one refuses for length
@@ -435,6 +469,7 @@ async def proxy_request(
                         f"retrying on another server"
                     )
                     last_error = Exception(f"HTTP 400 context length from {server}")
+                    upstream_failures_total.labels(model, server).inc()
                     continue
 
             # Success! Update the preferred instances map and create the cookie header
@@ -476,6 +511,7 @@ async def proxy_request(
                         await load_release(_server, _rid)
 
                 owned = False  # generator's finally now owns the release
+                upstream_request_duration_seconds.labels(model).observe(_monotonic() - upstream_start)
                 return StreamingResponse(
                     content=generate_chunks(),
                     status_code=response.status_code,
@@ -488,6 +524,7 @@ async def proxy_request(
                 response_headers.pop("content-encoding", None)
                 response_headers.pop("content-length", None)
                 await response.aclose()
+                upstream_request_duration_seconds.labels(model).observe(_monotonic() - upstream_start)
                 return Response(
                     content=bad_request_body,
                     status_code=response.status_code,
@@ -498,6 +535,7 @@ async def proxy_request(
                 # Raw bytes, still encoded — kept consistent with the Content-Encoding header.
                 response_bytes = b"".join([chunk async for chunk in response.aiter_raw()])
                 await response.aclose()
+                upstream_request_duration_seconds.labels(model).observe(_monotonic() - upstream_start)
                 return Response(
                     content=response_bytes,
                     status_code=response.status_code,
@@ -514,6 +552,7 @@ async def proxy_request(
                 f"Connection failed to {url} (attempt {attempt}/{len(servers_to_try)}): {type(e).__name__}: {e}"
             )
             last_error = e
+            upstream_failures_total.labels(model, server).inc()
             continue
 
         except Exception as e:
