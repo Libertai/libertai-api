@@ -3,9 +3,11 @@
 /metrics is served by this middleware rather than a FastAPI route so it
 never appears in the OpenAPI docs, and the token check runs before any app
 code. Labels stay bounded: model is always the canonical resolved name, server
-is a configured upstream identity, endpoint maps to a fixed set — no
+is a configured upstream identity, endpoint and method map to fixed sets — no
 client-controlled values, so the metric surface is constant regardless of
-traffic.
+traffic. Failed token attempts are deliberately not counted: /metrics
+requests never reach the transport counters, keeping the scrape path quiet
+for self-monitoring.
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ http_request_duration_seconds = Histogram(
 # Business-level (collecting in src/proxy.py at the decision points).
 requests_total = Counter(
     "libertai_requests_total",
-    "Chat requests by resolved model and request tier (x402/unknown/free/paid).",
+    "Proxy requests by resolved model and request tier (x402/unknown/free/paid).",
     ["model", "tier"],
 )
 gate_rejections_total = Counter(
@@ -62,7 +64,7 @@ upstream_failures_total = Counter(
 )
 upstream_request_duration_seconds = Histogram(
     "libertai_upstream_request_duration_seconds",
-    "Time to a successful upstream response (incl. failover), by model.",
+    "Time to a response returned to the client (incl. failover), by model.",
     ["model"],
     buckets=_DURATION_BUCKETS,
 )
@@ -95,6 +97,22 @@ def _endpoint_label(path: str) -> str:
     return "other"
 
 
+_HTTP_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"})
+
+
+def _method_label(method: str) -> str:
+    """Map a request method to a bounded label; unknown methods fall back.
+
+    Methods are arbitrary tokens (RFC 9110): uvicorn/h11 accepts anything and
+    Traefik forwards it, so an unauthenticated client could mint unbounded
+    label values. Each unique raw method would permanently add ~11 series
+    (child + 8 buckets + count + sum), hence the whitelist.
+    """
+    if method in _HTTP_METHODS:
+        return method
+    return "other"
+
+
 class MetricsMiddleware:
     """Serve the token-gated /metrics endpoint and collect transport metrics.
 
@@ -111,11 +129,15 @@ class MetricsMiddleware:
             await self.app(scope, receive, send)
             return
         if scope["path"] == "/metrics":
+            if scope["method"] not in ("GET", "HEAD"):
+                response = JSONResponse(status_code=405, content={"detail": "method not allowed"})
+                await response(scope, receive, send)
+                return
             await self._serve_metrics(scope, receive, send)
             return
 
         endpoint = _endpoint_label(scope["path"])
-        method = scope["method"]
+        method = _method_label(scope["method"])
         start = time.monotonic()
         # Starlette's exception middleware always emits a response, but default
         # to 0 so an unset status can't masquerade as a real code.

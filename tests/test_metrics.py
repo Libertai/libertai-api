@@ -130,6 +130,34 @@ def test_transport_metrics_count_a_request(monkeypatch):
     assert 'libertai_http_requests_total{endpoint="health",method="GET",status="503"}' in text
 
 
+def test_method_label_is_bounded(monkeypatch):
+    # Methods are arbitrary tokens (RFC 9110); a made-up one must collapse into
+    # the "other" label instead of minting a fresh series.
+    resp = _client().request("X-RANDOM", "/health")
+    assert resp.status_code in (404, 405, 503)
+    text = _scrape(monkeypatch)
+    assert 'libertai_http_requests_total{endpoint="health",method="other"' in text
+    assert 'method="X-RANDOM"' not in text
+
+
+def test_metrics_self_scrape_is_not_counted(monkeypatch):
+    # /metrics requests are answered by the middleware and must never reach the
+    # transport counters (self-scrape noise on our own monitoring path).
+    monkeypatch.setattr(config, "METRICS_TOKEN", TOKEN)
+    client = _client()
+    before = _scrape(monkeypatch)
+    assert client.get("/metrics", params={"token": TOKEN}).status_code == 200
+    after = _scrape(monkeypatch)
+    before_http = [line for line in before.splitlines() if line.startswith("libertai_http_requests_total")]
+    after_http = [line for line in after.splitlines() if line.startswith("libertai_http_requests_total")]
+    assert before_http == after_http
+
+
+def test_metrics_rejects_non_get_methods(monkeypatch):
+    monkeypatch.setattr(config, "METRICS_TOKEN", TOKEN)
+    assert _client().post("/metrics", json={}).status_code == 405
+
+
 def test_gate_rejection_and_tier_metrics(monkeypatch, _reset_keys_manager):
     _gate_thresholds(monkeypatch)
     sends = _stub_forwarding(monkeypatch)

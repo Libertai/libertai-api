@@ -123,7 +123,7 @@ def _request_tier(api_key: str | None) -> str:
 async def _free_tier_gate(
     model: str,
     model_name: str,
-    api_key: str | None,
+    tier: str,
     loads: dict[str, int],
 ) -> tuple[dict[str, int], JSONResponse | None]:
     """Admission control for free-tier keys.
@@ -144,7 +144,10 @@ async def _free_tier_gate(
     # (possible only with inconsistent backend data) fails open like any other
     # unknown. The tier comparison is normalized because the gate hinges on it:
     # casing drift ("Free") must not silently fail every free-tier key open.
-    if _request_tier(api_key) != "free":
+    # The tier is computed once in proxy_request and passed in so that the gate
+    # decision and the requests_total/gate_rejections_total counters always
+    # agree, even when a keys sync lands during the soft-load wait.
+    if tier != "free":
         return loads, None
 
     pool_load = _pool_load(model, loads)
@@ -358,9 +361,11 @@ async def proxy_request(
 
     # Free-tier admission control: wait (bounded) under soft load, reject at hard
     # load. Paid tiers and unknown keys bypass; the possibly-refreshed snapshot
-    # keeps the sorting below accurate.
-    loads, gate_response = await _free_tier_gate(model, model_name, api_key, loads)
-    requests_total.labels(model, _request_tier(api_key)).inc()
+    # keeps the sorting below accurate. The tier is resolved once, before the
+    # gate, so the rejection and request counters stay consistent with it.
+    tier = _request_tier(api_key)
+    loads, gate_response = await _free_tier_gate(model, model_name, tier, loads)
+    requests_total.labels(model, tier).inc()
     if gate_response is not None:
         return gate_response
 
