@@ -110,14 +110,16 @@ def test_metrics_pins_the_encode_guard_with_a_non_ascii_token(monkeypatch):
 def test_metrics_counts_failed_token_attempts(monkeypatch):
     monkeypatch.setattr(config, "METRICS_TOKEN", TOKEN)
     client = _client()
-    assert client.get("/metrics").status_code == 401
-    assert client.get("/metrics?token=wrong").status_code == 401
-    assert client.get("/metrics?token=%C3%A9").status_code == 401
+    failed = 0
+    for url in ("/metrics", "/metrics?token=wrong", "/metrics?token=%C3%A9"):
+        assert client.get(url).status_code == 401
+        failed += 1
     text = _scrape(monkeypatch)
-    assert "libertai_metrics_auth_failures_total" in text
-    assert text.startswith("libertai_metrics_auth_failures_total {") or (
-        "libertai_metrics_auth_failures_total" in text
-    )
+    sample = [line for line in text.splitlines() if line.startswith("libertai_metrics_auth_failures_total")]
+    # The family renders as a bare line (no labels); earlier tests also failed
+    # token attempts, so the value must have grown by at least this test's own.
+    assert len(sample) == 1
+    assert float(sample[0].split()[-1]) >= failed
 
 
 def test_metrics_accepts_bearer_token(monkeypatch):

@@ -31,7 +31,7 @@ _GATE_WAIT_BUCKETS = (0.1, 0.3, 1.2, 5)
 # Transport-level (collecting middleware): endpoint/method/status only.
 http_requests_total = Counter(
     "libertai_http_requests_total",
-    "HTTP requests handled by the proxy, by endpoint/method/status (status=\"0\" marks "
+    'HTTP requests handled by the proxy, by endpoint/method/status (status="0" marks '
     "an unhandled crash before a response started).",
     ["endpoint", "method", "status"],
 )
@@ -47,7 +47,7 @@ requests_total = Counter(
     "libertai_requests_total",
     "Proxy requests past auth/model checks, by resolved model and tier "
     "(x402/unknown/free/paid); 402 responses surface on the transport counter "
-    "as libertai_http_requests_total{status=\"402\"}.",
+    'as libertai_http_requests_total{status="402"}.',
     ["model", "tier"],
 )
 metrics_auth_failures_total = Counter(
@@ -72,7 +72,8 @@ upstream_failures_total = Counter(
 )
 upstream_request_duration_seconds = Histogram(
     "libertai_upstream_request_duration_seconds",
-    "Time to a response returned to the client (incl. failover), by model.",
+    "Time to an upstream response (incl. failover), by model. Streamed responses "
+    "observe at upstream header arrival, non-streamed after the full body.",
     ["model"],
     buckets=_DURATION_BUCKETS,
 )
@@ -138,7 +139,11 @@ class MetricsMiddleware:
             return
         if scope["path"] == "/metrics":
             if scope["method"] not in ("GET", "HEAD"):
-                response = JSONResponse(status_code=405, content={"detail": "method not allowed"})
+                response = JSONResponse(
+                    status_code=405,
+                    content={"detail": "method not allowed"},
+                    headers={"Allow": "GET, HEAD"},
+                )
                 await response(scope, receive, send)
                 return
             await self._serve_metrics(scope, receive, send)
@@ -147,8 +152,11 @@ class MetricsMiddleware:
         endpoint = _endpoint_label(scope["path"])
         method = _method_label(scope["method"])
         start = time.monotonic()
-        # Starlette's exception middleware always emits a response, but default
-        # to 0 so an unset status can't masquerade as a real code.
+        # ExceptionMiddleware only re-raises non-HTTPExceptions; the real 500 is
+        # emitted by ServerErrorMiddleware, outermost of the stack, after this
+        # middleware's finally has already run and gone through the original send
+        # (not wrapped_send). Default to 0 so such crashes record status="0" — a
+        # deliberate crash marker the finally below cannot hear about.
         status = 0
         duration_observed = False
 
