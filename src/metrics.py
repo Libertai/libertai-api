@@ -200,7 +200,9 @@ def _token_matches(request: Request, token: str) -> bool:
 
     hmac.compare_digest raises TypeError on non-ASCII str (a client-controlled
     value must never be able to 500 the endpoint), so both sides are compared
-    as UTF-8 bytes.
+    as UTF-8 bytes. The query param wins when both are present (fail-closed on
+    mismatch, no fallback): a misconfigured scraper stuck with a wrong ?token=
+    keeps 401ing even with a valid Bearer header.
     """
     provided = request.query_params.get("token")
     if not provided:

@@ -3,6 +3,7 @@
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.routing import Route
 
 from src import proxy
 from src.api_keys import KeysManager
@@ -120,6 +121,29 @@ def test_metrics_counts_failed_token_attempts(monkeypatch):
     # token attempts, so the value must have grown by at least this test's own.
     assert len(sample) == 1
     assert float(sample[0].split()[-1]) >= failed
+
+
+def test_unhandled_crash_records_status_zero(monkeypatch):
+    # A crash before any response.start makes ServerErrorMiddleware emit its 500
+    # after this middleware's finally has run and through its own send, so the
+    # request must surface as status="0" (the crash marker), never status="500".
+    # Pins the middleware-stack ordering: moving MetricsMiddleware inside
+    # ExceptionMiddleware would silently flip these to status="500".
+    async def _boom(scope, receive, send):
+        raise RuntimeError("boom")
+
+    route = Route("/boom", _boom, methods=["GET"])
+    app.router.routes.append(route)
+    try:
+        client = TestClient(app, raise_server_exceptions=False)
+        assert client.get("/boom").status_code == 500
+    finally:
+        app.router.routes.remove(route)
+
+    text = _scrape(monkeypatch)
+    crash = [line for line in text.splitlines() if 'endpoint="other",method="GET",status="0"' in line]
+    assert crash
+    assert 'endpoint="other",method="GET",status="500"' not in text
 
 
 def test_metrics_accepts_bearer_token(monkeypatch):
