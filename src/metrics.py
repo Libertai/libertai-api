@@ -5,9 +5,10 @@ never appears in the OpenAPI docs, and the token check runs before any app
 code. Labels stay bounded: model is always the canonical resolved name, server
 is a configured upstream identity, endpoint and method map to fixed sets — no
 client-controlled values, so the metric surface is constant regardless of
-traffic. Failed token attempts are deliberately not counted: /metrics
-requests never reach the transport counters, keeping the scrape path quiet
-for self-monitoring.
+traffic. Failed token attempts are counted only by
+libertai_metrics_auth_failures_total and never reach the transport counters,
+keeping the scrape path quiet for self-monitoring while still exposing
+brute-force probing.
 """
 
 from __future__ import annotations
@@ -30,7 +31,8 @@ _GATE_WAIT_BUCKETS = (0.1, 0.3, 1.2, 5)
 # Transport-level (collecting middleware): endpoint/method/status only.
 http_requests_total = Counter(
     "libertai_http_requests_total",
-    "HTTP requests handled by the proxy, by endpoint/method/status.",
+    "HTTP requests handled by the proxy, by endpoint/method/status (status=\"0\" marks "
+    "an unhandled crash before a response started).",
     ["endpoint", "method", "status"],
 )
 http_request_duration_seconds = Histogram(
@@ -43,8 +45,14 @@ http_request_duration_seconds = Histogram(
 # Business-level (collecting in src/proxy.py at the decision points).
 requests_total = Counter(
     "libertai_requests_total",
-    "Proxy requests by resolved model and request tier (x402/unknown/free/paid).",
+    "Proxy requests past auth/model checks, by resolved model and tier "
+    "(x402/unknown/free/paid); 402 responses surface on the transport counter "
+    "as libertai_http_requests_total{status=\"402\"}.",
     ["model", "tier"],
+)
+metrics_auth_failures_total = Counter(
+    "libertai_metrics_auth_failures_total",
+    "Rejected attempts to read /metrics (missing, wrong, or malformed token).",
 )
 gate_rejections_total = Counter(
     "libertai_gate_rejections_total",
@@ -166,8 +174,10 @@ class MetricsMiddleware:
         token = config.METRICS_TOKEN
         response: Response
         if not token:
+            metrics_auth_failures_total.inc()
             response = JSONResponse(status_code=401, content={"detail": "metrics not configured"})
         elif not _token_matches(Request(scope), token):
+            metrics_auth_failures_total.inc()
             response = JSONResponse(status_code=401, content={"detail": "invalid token"})
         else:
             response = Response(

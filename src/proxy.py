@@ -140,12 +140,9 @@ async def _free_tier_gate(
     under the hard threshold all pass at once, and replicas gate independently.
     Bounded overshoot is expected for a tunable heuristic.
     """
-    # Membership gating: tiers is metadata only, so a key outside the valid set
-    # (possible only with inconsistent backend data) fails open like any other
-    # unknown. The tier comparison is normalized because the gate hinges on it:
-    # casing drift ("Free") must not silently fail every free-tier key open.
-    # The tier is computed once in proxy_request and passed in so that the gate
-    # decision and the requests_total/gate_rejections_total counters always
+    # Only the free tier is gated; everything else (x402, unknown, paid) fails
+    # open. The tier is computed once in proxy_request and passed in so that the
+    # gate decision and the requests_total/gate_rejections_total counters always
     # agree, even when a keys sync lands during the soft-load wait.
     if tier != "free":
         return loads, None

@@ -90,10 +90,34 @@ def test_metrics_rejects_missing_or_wrong_token(monkeypatch):
 
 def test_metrics_rejects_non_ascii_token_without_500(monkeypatch):
     # hmac.compare_digest raises TypeError on non-ASCII str; a client-controlled
-    # token must 401, never bubble into a 500.
+    # token must 401, never bubble into a 500. The raw URL form is essential:
+    # params={"token": "%C3%A9"} percent-encodes the % and reaches the app as
+    # the ASCII literal %C3%A9, which would pass even without the bytes guard.
     monkeypatch.setattr(config, "METRICS_TOKEN", TOKEN)
-    resp = _client().get("/metrics", params={"token": "%C3%A9"})
+    resp = _client().get("/metrics?token=%C3%A9")
     assert resp.status_code == 401
+
+
+def test_metrics_pins_the_encode_guard_with_a_non_ascii_token(monkeypatch):
+    # A non-ASCII configured token must also authenticate via its percent-encoded
+    # UTF-8 bytes, exercising the .encode() on the stored-token side.
+    monkeypatch.setattr(config, "METRICS_TOKEN", "tèst")
+    client = _client()
+    assert client.get("/metrics?token=t%C3%A8st").status_code == 200
+    assert client.get("/metrics?token=%C3%A9").status_code == 401
+
+
+def test_metrics_counts_failed_token_attempts(monkeypatch):
+    monkeypatch.setattr(config, "METRICS_TOKEN", TOKEN)
+    client = _client()
+    assert client.get("/metrics").status_code == 401
+    assert client.get("/metrics?token=wrong").status_code == 401
+    assert client.get("/metrics?token=%C3%A9").status_code == 401
+    text = _scrape(monkeypatch)
+    assert "libertai_metrics_auth_failures_total" in text
+    assert text.startswith("libertai_metrics_auth_failures_total {") or (
+        "libertai_metrics_auth_failures_total" in text
+    )
 
 
 def test_metrics_accepts_bearer_token(monkeypatch):
