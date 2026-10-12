@@ -17,7 +17,7 @@ from __future__ import annotations
 import hmac
 import time
 
-from prometheus_client import Counter, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -181,18 +181,14 @@ class MetricsMiddleware:
 
     async def _serve_metrics(self, scope: Scope, receive: Receive, send: Send) -> None:
         token = config.METRICS_TOKEN
-        response: Response
-        if not token:
-            metrics_auth_failures_total.inc()
-            response = JSONResponse(status_code=401, content={"detail": "metrics not configured"})
-        elif not _token_matches(Request(scope), token):
+        if token and _token_matches(Request(scope), token):
+            response = Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+        else:
+            # Uniform 401 body: an unauthenticated prober must not learn whether
+            # the endpoint is armed but mistyped, or not configured at all. Both
+            # still increment the auth-failure counter for operators.
             metrics_auth_failures_total.inc()
             response = JSONResponse(status_code=401, content={"detail": "invalid token"})
-        else:
-            response = Response(
-                content=generate_latest(),
-                media_type="text/plain; version=0.0.4; charset=utf-8",
-            )
         await response(scope, receive, send)
 
 

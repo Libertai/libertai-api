@@ -322,3 +322,55 @@ def test_soft_load_wait_and_upstream_success_metrics(monkeypatch, _reset_keys_ma
         line for line in text.splitlines() if line.startswith("libertai_upstream_request_duration_seconds_bucket")
     ]
     assert any('model="m"' in line for line in upstream_lines)
+
+
+def test_streaming_upstream_success_observes_duration(monkeypatch, _reset_keys_manager):
+    # text/event-stream forces the streaming branch, which observes the upstream
+    # histogram at header arrival (before any body bytes are consumed) — the
+    # semantics documented in the metric help text.
+    _gate_thresholds(monkeypatch)
+    monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
+    monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
+
+    async def _loads(_model):
+        return {"http://up": 0}
+
+    async def _noop(*args, **kwargs):
+        return None
+
+    async def _chunks():
+        yield b'data: {"ok": true}\n\n'
+
+    async def _ok(req, **kwargs):
+        resp = httpx.Response(200, content=_chunks(), headers={"Content-Type": "text/event-stream"})
+        resp.request = req
+        return resp
+
+    monkeypatch.setattr(proxy, "get_model_loads", _loads)
+    monkeypatch.setattr(proxy, "load_acquire", _noop)
+    monkeypatch.setattr(proxy, "load_release", _noop)
+    monkeypatch.setattr(proxy.client, "send", _ok)
+
+    KeysManager().keys = {"paid"}
+    KeysManager().tiers = {"paid": "pro"}
+
+    def upstream_count():
+        # Count lines are absent until the first observation, and other tests
+        # may already have observed this histogram (tests run in random order),
+        # so read the current value and diff it.
+        text = _scrape(monkeypatch)
+        counts = [
+            float(line.split()[-1])
+            for line in text.splitlines()
+            if line.startswith("libertai_upstream_request_duration_seconds_count")
+        ]
+        return counts[0] if counts else 0.0
+
+    before = upstream_count()
+    resp = _post_with_key("paid")
+    after = upstream_count()
+
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers["content-type"]
+    assert resp.text == 'data: {"ok": true}\n\n'
+    assert after - before == 1
