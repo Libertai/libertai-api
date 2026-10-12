@@ -23,11 +23,16 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.config import config
+from src.constants import FREE_GATE_MAX_WAIT, FREE_GATE_POLL_INTERVAL
 
 # Latency is dominated by upstream inference (seconds to minutes), so buckets
 # extend well past Prometheus' 10s default tail.
 _DURATION_BUCKETS = (0.1, 0.3, 1.2, 5, 15, 60, 300, 600)
-_GATE_WAIT_BUCKETS = (0.1, 0.3, 1.2, 5)
+# The gate checks its deadline before each poll sleep, so a real wait can reach
+# FREE_GATE_MAX_WAIT + FREE_GATE_POLL_INTERVAL; the derived tail keeps those in
+# a finite bucket rather than +Inf. Hard-coded bucket tails would silently drift
+# out of sync if the pacing constants ever changed.
+_GATE_WAIT_BUCKETS = (0.1, 0.3, 1.2, FREE_GATE_MAX_WAIT, FREE_GATE_MAX_WAIT + FREE_GATE_POLL_INTERVAL)
 
 # Transport-level (collecting middleware): endpoint/method/status only.
 http_requests_total = Counter(
@@ -68,7 +73,8 @@ gate_wait_seconds = Histogram(
 )
 upstream_failures_total = Counter(
     "libertai_upstream_failures_total",
-    "Forwarding attempts that failed over to another server, by model/server.",
+    "Forwarding attempts abandoned on upstream failure (connect errors and 5xx), "
+    "by model/server — counted on the final attempt too, after which no failover follows.",
     ["model", "server"],
 )
 upstream_request_duration_seconds = Histogram(

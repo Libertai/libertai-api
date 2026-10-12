@@ -272,6 +272,56 @@ def test_unknown_tier_key_fails_open_and_is_admitted(monkeypatch, _reset_keys_ma
     assert 'libertai_requests_total{model="m",tier="unknown"}' in text
 
 
+def test_verified_x402_request_records_x402_tier(monkeypatch):
+    # A no-api-key request with a verified payment clears the x402 branch and is
+    # recorded as tier="x402" (payment-verified, not the 402 response — which is
+    # visible only on the transport counter as status=402).
+    monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
+    monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
+
+    async def _loads(_model):
+        return {"http://up": 0}
+
+    async def _noop(*args, **kwargs):
+        return None
+
+    async def _max_price(model, body_json):
+        return 1.0
+
+    async def _requirements(model_name, max_price, resource_url):
+        return [{"scheme": "exact"}]
+
+    async def _valid(header, requirements):
+        return True
+
+    async def _chunks():
+        yield b'{"ok": true}'
+
+    async def _ok(req, **kwargs):
+        resp = httpx.Response(200, content=_chunks(), headers={"Content-Type": "application/json"})
+        resp.request = req
+        return resp
+
+    monkeypatch.setattr(proxy, "get_model_loads", _loads)
+    monkeypatch.setattr(proxy, "load_acquire", _noop)
+    monkeypatch.setattr(proxy, "load_release", _noop)
+    monkeypatch.setattr(proxy.x402_manager, "compute_max_price", _max_price)
+    monkeypatch.setattr(proxy.x402_manager, "fetch_payment_requirements", _requirements)
+    monkeypatch.setattr(proxy.x402_manager, "verify_payment", _valid)
+    monkeypatch.setattr(proxy.client, "send", _ok)
+
+    resp = _client().post(
+        "/v1/chat/completions",
+        json={"model": "m"},
+        headers={"x-payment": "some-payment-proof"},
+    )
+
+    assert resp.status_code == 200
+
+    text = _scrape(monkeypatch)
+    assert 'libertai_requests_total{model="m",tier="x402"}' in text
+
+
 def test_soft_load_wait_and_upstream_success_metrics(monkeypatch, _reset_keys_manager):
     # A free key between the soft and hard thresholds waits once, then reaches a
     # successful upstream: both the gate-wait and the upstream-time histograms
