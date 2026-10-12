@@ -78,8 +78,10 @@ def _scrape(monkeypatch):
 
 def test_metrics_disabled_when_token_unset(monkeypatch):
     monkeypatch.setattr(config, "METRICS_TOKEN", "")
-    resp = _client().get("/metrics")
-    assert resp.status_code == 401
+    assert _client().get("/metrics").status_code == 401
+    text = _scrape(monkeypatch)
+    sample = [line for line in text.splitlines() if line.startswith("libertai_metrics_auth_failures_total")]
+    assert sample and float(sample[-1].split()[-1]) >= 1
 
 
 def test_metrics_rejects_missing_or_wrong_token(monkeypatch):
@@ -151,6 +153,16 @@ def test_metrics_accepts_bearer_token(monkeypatch):
     client = _client()
     assert client.get("/metrics", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
     assert client.get("/metrics", headers={"Authorization": "Bearer "}).status_code == 401
+
+
+def test_metrics_query_token_wins_over_bearer_on_mismatch(monkeypatch):
+    # A present-but-wrong or empty ?token= beats a valid Bearer header:
+    # fail-closed with no fallback, so a scraper stuck with a stale query
+    # token keeps 401ing and an operator can see why.
+    monkeypatch.setattr(config, "METRICS_TOKEN", TOKEN)
+    client = _client()
+    for url in ("/metrics?token=wrong", "/metrics?token="):
+        assert client.get(url, headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 401
 
 
 def test_metrics_not_exposed_in_openapi_docs():
@@ -240,6 +252,24 @@ def test_admitted_request_counts_upstream_failure(monkeypatch, _reset_keys_manag
     text = _scrape(monkeypatch)
     assert 'libertai_requests_total{model="m",tier="paid"}' in text
     assert 'libertai_upstream_failures_total{model="m",server="http://up"}' in text
+
+
+def test_unknown_tier_key_fails_open_and_is_admitted(monkeypatch, _reset_keys_manager):
+    # A key outside the valid set must fail open (admitted) and be recorded as
+    # tier="unknown" — conflating it with "paid" would hide sync skew in metrics.
+    _gate_thresholds(monkeypatch)
+    sends = _stub_forwarding(monkeypatch)
+    KeysManager().keys = {"paid"}
+    KeysManager().tiers = {"paid": "pro"}
+
+    resp = _post_with_key("ghost")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "All servers unavailable for model m"
+    assert len(sends) == 1
+
+    text = _scrape(monkeypatch)
+    assert 'libertai_requests_total{model="m",tier="unknown"}' in text
 
 
 def test_soft_load_wait_and_upstream_success_metrics(monkeypatch, _reset_keys_manager):

@@ -6,9 +6,10 @@ code. Labels stay bounded: model is always the canonical resolved name, server
 is a configured upstream identity, endpoint and method map to fixed sets — no
 client-controlled values, so the metric surface is constant regardless of
 traffic. Failed token attempts are counted only by
-libertai_metrics_auth_failures_total and never reach the transport counters,
-keeping the scrape path quiet for self-monitoring while still exposing
-brute-force probing.
+libertai_metrics_auth_failures_total and never reach the transport counters;
+non-GET/HEAD attempts are answered 405 and counted nowhere, so probing both
+kinds of misuse shows up only in the proxy access logs (and the auth-failure
+counter) while keeping the scrape path quiet.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ _GATE_WAIT_BUCKETS = (0.1, 0.3, 1.2, 5)
 http_requests_total = Counter(
     "libertai_http_requests_total",
     'HTTP requests handled by the proxy, by endpoint/method/status (status="0" marks '
-    "an unhandled crash before a response started).",
+    "a request that ended before a response started — unhandled crash or client disconnect).",
     ["endpoint", "method", "status"],
 )
 http_request_duration_seconds = Histogram(
@@ -200,15 +201,15 @@ def _token_matches(request: Request, token: str) -> bool:
 
     hmac.compare_digest raises TypeError on non-ASCII str (a client-controlled
     value must never be able to 500 the endpoint), so both sides are compared
-    as UTF-8 bytes. The query param wins when both are present (fail-closed on
-    mismatch, no fallback): a misconfigured scraper stuck with a wrong ?token=
-    keeps 401ing even with a valid Bearer header.
+    as UTF-8 bytes. The query param wins when present, even empty — fail-closed
+    on mismatch with no fallback: a misconfigured scraper stuck with a wrong
+    or empty ?token= keeps 401ing despite a valid Bearer header.
     """
-    provided = request.query_params.get("token")
-    if not provided:
+    if "token" in request.query_params:
+        provided = request.query_params["token"]
+    else:
         authorization = request.headers.get("authorization", "")
-        if authorization.lower().startswith("bearer "):
-            provided = authorization[7:]
+        provided = authorization[7:] if authorization.lower().startswith("bearer ") else ""
     if not provided:
         return False
     return hmac.compare_digest(provided.encode("utf-8"), token.encode("utf-8"))
