@@ -95,6 +95,51 @@ def test_tie_load_prefers_first_configured_server(monkeypatch):
     assert resp.status_code == 200
 
 
+def test_healthy_tier_tie_prefers_first_configured_server(monkeypatch):
+    # Production path: both servers healthy (so tiered first), equal loads ->
+    # models.json order puts the small server in front.
+    monkeypatch.setattr(
+        proxy.server_health_monitor, "healthy_model_urls", {"m": ["http://small", "http://large"]}
+    )
+    tried = _responder(
+        monkeypatch,
+        {
+            "small": _streamed(200, b'{"ok":true}'),
+            "large": _streamed(200, b'{"ok":true}'),
+        },
+    )
+
+    resp = _post()
+
+    assert tried == ["small"]
+    assert resp.status_code == 200
+
+
+def test_healthy_tier_load_still_reorders(monkeypatch):
+    # Stable ordering must not defeat load balancing: the busy primary yields to
+    # the idle overflow server within the healthy tier.
+    monkeypatch.setattr(
+        proxy.server_health_monitor, "healthy_model_urls", {"m": ["http://small", "http://large"]}
+    )
+
+    async def _loads(_model):
+        return {"http://small": 1, "http://large": 0}
+
+    monkeypatch.setattr(proxy, "get_model_loads", _loads)
+    tried = _responder(
+        monkeypatch,
+        {
+            "small": _streamed(200, b'{"ok":true}'),
+            "large": _streamed(200, b'{"ok":true}'),
+        },
+    )
+
+    resp = _post()
+
+    assert tried == ["large"]
+    assert resp.status_code == 200
+
+
 def test_context_length_400_fails_over_to_the_next_server(monkeypatch):
     # The small server is first in models.json, so the retry is the only way to
     # reach the large one.

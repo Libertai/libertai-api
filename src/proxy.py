@@ -346,6 +346,10 @@ async def proxy_request(
         # tie at 0 whenever traffic doesn't overlap; a random tie-break there sent
         # ~50% of baseline requests to slower heterogeneous replicas (glm-5.3 mixes
         # a B200 with a 4x RTX 6000 box that is 3-4x slower per request).
+        # NB: loads are snapshotted once per request, so simultaneous arrivals in an
+        # idle window all pick the primary before their leases register; self-correcting
+        # at typical concurrency. If the primary ever saturates under bursts, revisit
+        # here (e.g. refresh the snapshot after load_acquire).
         return sorted(urls, key=lambda s: loads.get(s, 0))
 
     tiered = [*by_load(healthy_servers), *by_load(capable_servers), *by_load(unknown_servers)]
