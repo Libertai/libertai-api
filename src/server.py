@@ -214,8 +214,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# Outermost: /metrics is intercepted here (token-gated, outside the OpenAPI
-# routes) before CORS or the body cap run, and every other request is timed.
+# Outermost user middleware: /metrics is intercepted here (token-gated, outside
+# the OpenAPI routes) before CORS or the body cap run, and every other request
+# is timed. Starlette's ServerErrorMiddleware still wraps this layer, so an
+# unhandled crash surfaces as status="0" (see src/metrics.py).
 app.add_middleware(MetricsMiddleware)
 
 

@@ -4,6 +4,7 @@ import random
 import time
 import uuid
 from http import HTTPStatus
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Cookie, HTTPException, Request, Response
@@ -103,7 +104,7 @@ def _reject_overloaded(model: str, model_name: str, pool_load: int) -> JSONRespo
     return model_overloaded_response(model_name)
 
 
-def _request_tier(api_key: str | None) -> str:
+def _request_tier(api_key: str | None) -> Literal["x402", "unknown", "free", "paid"]:
     """Classify a request for metrics and the gate: x402, unknown, free, or paid.
 
     Mirrors the gate's membership rules: keys inside the valid set with an
@@ -123,7 +124,7 @@ def _request_tier(api_key: str | None) -> str:
 async def _free_tier_gate(
     model: str,
     model_name: str,
-    tier: str,
+    tier: Literal["x402", "unknown", "free", "paid"],
     loads: dict[str, int],
 ) -> tuple[dict[str, int], JSONResponse | None]:
     """Admission control for free-tier keys.

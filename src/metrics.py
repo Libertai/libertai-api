@@ -29,10 +29,17 @@ from src.constants import FREE_GATE_MAX_WAIT, FREE_GATE_POLL_INTERVAL
 # extend well past Prometheus' 10s default tail.
 _DURATION_BUCKETS = (0.1, 0.3, 1.2, 5, 15, 60, 300, 600)
 # The gate checks its deadline before each poll sleep, so a real wait can reach
-# FREE_GATE_MAX_WAIT + FREE_GATE_POLL_INTERVAL; the derived tail keeps those in
-# a finite bucket rather than +Inf. Hard-coded bucket tails would silently drift
-# out of sync if the pacing constants ever changed.
-_GATE_WAIT_BUCKETS = (0.1, 0.3, 1.2, FREE_GATE_MAX_WAIT, FREE_GATE_MAX_WAIT + FREE_GATE_POLL_INTERVAL)
+# FREE_GATE_MAX_WAIT + FREE_GATE_POLL_INTERVAL (~5.5s); the derived tail bucket
+# keeps the timed-out case finite rather than in +Inf, with one poll of margin
+# for scheduling overshoot. Derived, not hard-coded, so the buckets track the
+# pacing constants if they ever change.
+_GATE_WAIT_BUCKETS = (
+    0.1,
+    0.3,
+    1.2,
+    FREE_GATE_MAX_WAIT,
+    FREE_GATE_MAX_WAIT + 2 * FREE_GATE_POLL_INTERVAL,
+)
 
 # Transport-level (collecting middleware): endpoint/method/status only.
 http_requests_total = Counter(

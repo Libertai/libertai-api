@@ -424,3 +424,43 @@ def test_streaming_upstream_success_observes_duration(monkeypatch, _reset_keys_m
     assert "text/event-stream" in resp.headers["content-type"]
     assert resp.text == 'data: {"ok": true}\n\n'
     assert after - before == 1
+
+
+def test_wait_then_hard_reject_observes_gate_wait(monkeypatch, _reset_keys_manager):
+    # Load crossing the hard threshold while a free request waits in the soft
+    # loop sheds it mid-wait: the gate-wait histogram is observed (the branch
+    # free-tier users actually hit under load) before the rejection is counted.
+    _gate_thresholds(monkeypatch)
+    sends = _stub_forwarding(monkeypatch)
+    loads_seq = iter([{"http://up": 30}, {"http://up": 60}])
+
+    async def _loads(_model):
+        try:
+            return next(loads_seq)
+        except StopIteration:
+            return {"http://up": 60}
+
+    async def _noop(*args, **kwargs):
+        return None
+
+    async def _no_sleep(seconds):
+        pass
+
+    monkeypatch.setattr(proxy, "get_model_loads", _loads)
+    monkeypatch.setattr(proxy, "load_acquire", _noop)
+    monkeypatch.setattr(proxy, "load_release", _noop)
+    monkeypatch.setattr(proxy, "_sleep", _no_sleep)
+
+    KeysManager().keys = {"free"}
+    KeysManager().tiers = {"free": "free"}
+
+    resp = _post_with_key("free")
+
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "model_overloaded"
+    assert sends == []
+
+    text = _scrape(monkeypatch)
+    wait_lines = [line for line in text.splitlines() if line.startswith("libertai_gate_wait_seconds_bucket")]
+    assert any('model="m"' in line for line in wait_lines)
+    assert 'libertai_gate_rejections_total{model="m"}' in text
