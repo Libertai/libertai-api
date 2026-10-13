@@ -78,9 +78,26 @@ def _post():
     )
 
 
+def test_tie_load_prefers_first_configured_server(monkeypatch):
+    # Equal (here: unreported) loads keep models.json order: the first configured
+    # server is tried first, and no failover happens when it succeeds.
+    tried = _responder(
+        monkeypatch,
+        {
+            "small": _streamed(200, b'{"ok":true}'),
+            "large": _streamed(200, b'{"ok":true}'),
+        },
+    )
+
+    resp = _post()
+
+    assert tried == ["small"]
+    assert resp.status_code == 200
+
+
 def test_context_length_400_fails_over_to_the_next_server(monkeypatch):
-    # Force the small server first so the retry is the only way to reach the large one.
-    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
+    # The small server is first in models.json, so the retry is the only way to
+    # reach the large one.
     tried = _responder(
         monkeypatch,
         {
@@ -99,7 +116,6 @@ def test_context_length_400_fails_over_to_the_next_server(monkeypatch):
 def test_last_server_context_length_400_reaches_the_client(monkeypatch):
     # No replica can take the prompt: the client must get the real 400 and its
     # explanation, not the generic all-servers-unavailable 503.
-    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
     tried = _responder(
         monkeypatch,
         {
@@ -118,7 +134,6 @@ def test_last_server_context_length_400_reaches_the_client(monkeypatch):
 def test_other_400s_are_returned_without_retrying(monkeypatch):
     # An unsupported parameter fails identically everywhere; retrying only doubles
     # the load and delays the error.
-    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
     body = b'{"error":{"message":"unknown field: temperatur","type":"BadRequestError","code":400}}'
     tried = _responder(
         monkeypatch,
@@ -140,7 +155,6 @@ _BOX_401 = b'{"detail":"Invalid API key"}'
 
 def test_box_401_for_a_valid_key_fails_over(monkeypatch):
     # A box that has not received the key list yet must not fail a key we know is valid.
-    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
     tried = _responder(
         monkeypatch,
         {
@@ -156,7 +170,6 @@ def test_box_401_for_a_valid_key_fails_over(monkeypatch):
 
 
 def test_box_401_for_an_unknown_key_is_returned(monkeypatch):
-    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
     tried = _responder(
         monkeypatch,
         {
@@ -176,7 +189,6 @@ def test_box_401_for_an_unknown_key_is_returned(monkeypatch):
 
 
 def test_last_server_401_reaches_the_client(monkeypatch):
-    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
     tried = _responder(
         monkeypatch,
         {
