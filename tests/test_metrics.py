@@ -322,6 +322,46 @@ def test_verified_x402_request_records_x402_tier(monkeypatch):
     assert 'libertai_requests_total{model="m",tier="x402"}' in text
 
 
+def test_unverified_x402_402_surfaces_only_on_transport_counter(monkeypatch):
+    # The exclusion half of the documented pairing: a no-key, no-payment
+    # request gets the 402 and shows up only on the transport counter —
+    # requests_total{tier="x402"} counts verified payments, not payment prompts.
+    from fastapi.responses import JSONResponse
+
+    monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
+    monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
+
+    async def _max_price(model, body_json):
+        return 1.0
+
+    async def _requirements(model_name, max_price, resource_url):
+        return [{"scheme": "exact"}]
+
+    monkeypatch.setattr(proxy.x402_manager, "compute_max_price", _max_price)
+    monkeypatch.setattr(proxy.x402_manager, "fetch_payment_requirements", _requirements)
+    monkeypatch.setattr(
+        proxy.x402_manager,
+        "build_402_response",
+        lambda requirements: JSONResponse(status_code=402, content={"x402": True}),
+    )
+
+    def sample_value(text, prefix):
+        lines = [line for line in text.splitlines() if line.startswith(prefix)]
+        return float(lines[0].split()[-1]) if lines else 0.0
+
+    tier_line = 'libertai_requests_total{model="m",tier="x402"}'
+    transport_line = 'libertai_http_requests_total{endpoint="chat_completions",method="POST",status="402"}'
+
+    before = _scrape(monkeypatch)
+    resp = _client().post("/v1/chat/completions", json={"model": "m"})
+    after = _scrape(monkeypatch)
+
+    assert resp.status_code == 402
+    assert resp.json() == {"x402": True}
+    assert sample_value(after, tier_line) == sample_value(before, tier_line)
+    assert sample_value(after, transport_line) - sample_value(before, transport_line) == 1
+
+
 def test_soft_load_wait_and_upstream_success_metrics(monkeypatch, _reset_keys_manager):
     # A free key between the soft and hard thresholds waits once, then reaches a
     # successful upstream: both the gate-wait and the upstream-time histograms

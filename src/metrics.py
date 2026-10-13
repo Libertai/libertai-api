@@ -81,8 +81,9 @@ gate_wait_seconds = Histogram(
 upstream_failures_total = Counter(
     "libertai_upstream_failures_total",
     "Any forwarding attempt abandoned in favor of failover (connect errors, 5xx, "
-    "tee failures, 401/400 retries), by model/server — counted on the final "
-    "attempt too, after which no failover follows.",
+    "tee failures, 401/400 retries), by model/server. Always-abandon paths "
+    "(connect/5xx/tee) count on the final attempt too; a final-attempt 401/400 is "
+    "forwarded to the client instead, so it is not counted here.",
     ["model", "server"],
 )
 upstream_request_duration_seconds = Histogram(
