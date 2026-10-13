@@ -140,6 +140,59 @@ def test_healthy_tier_load_still_reorders(monkeypatch):
     assert resp.status_code == 200
 
 
+def test_busy_primary_stays_primary_below_capacity(monkeypatch):
+    # A server's capacity is how many concurrent requests it absorbs before the
+    # gateway overflows: with capacity 32, one (or 31) in-flight requests still
+    # count as saturation 0, so the primary keeps taking traffic.
+    monkeypatch.setattr(
+        proxy.server_health_monitor, "healthy_model_urls", {"m": ["http://small", "http://large"]}
+    )
+    monkeypatch.setattr(proxy.config, "SERVER_CAPACITY", {"http://small": 32, "http://large": 12})
+
+    async def _loads(_model):
+        return {"http://small": 31, "http://large": 0}
+
+    monkeypatch.setattr(proxy, "get_model_loads", _loads)
+    tried = _responder(
+        monkeypatch,
+        {
+            "small": _streamed(200, b'{"ok":true}'),
+            "large": _streamed(200, b'{"ok":true}'),
+        },
+    )
+
+    resp = _post()
+
+    assert tried == ["small"]
+    assert resp.status_code == 200
+
+
+def test_saturated_primary_overflows(monkeypatch):
+    # At capacity (32 in flight on a capacity-32 primary), saturation reaches 1
+    # and the next request goes to the idle secondary.
+    monkeypatch.setattr(
+        proxy.server_health_monitor, "healthy_model_urls", {"m": ["http://small", "http://large"]}
+    )
+    monkeypatch.setattr(proxy.config, "SERVER_CAPACITY", {"http://small": 32, "http://large": 12})
+
+    async def _loads(_model):
+        return {"http://small": 32, "http://large": 0}
+
+    monkeypatch.setattr(proxy, "get_model_loads", _loads)
+    tried = _responder(
+        monkeypatch,
+        {
+            "small": _streamed(200, b'{"ok":true}'),
+            "large": _streamed(200, b'{"ok":true}'),
+        },
+    )
+
+    resp = _post()
+
+    assert tried == ["large"]
+    assert resp.status_code == 200
+
+
 def test_context_length_400_fails_over_to_the_next_server(monkeypatch):
     # The small server is first in models.json, so the retry is the only way to
     # reach the large one.

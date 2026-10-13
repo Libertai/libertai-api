@@ -341,16 +341,17 @@ async def proxy_request(
     unknown_servers = [s for s in all_servers if s not in healthy_set and s not in capable_set]
 
     def by_load(urls: list[str]) -> list[str]:
-        # Stable sort: equal-load servers keep their models.json order, so the first
-        # configured server is the primary and the rest are overflow/failover. Loads
-        # tie at 0 whenever traffic doesn't overlap; a random tie-break there sent
-        # ~50% of baseline requests to slower heterogeneous replicas (glm-5.3 mixes
-        # a B200 with a 4x RTX 6000 box that is 3-4x slower per request).
-        # NB: loads are snapshotted once per request, so simultaneous arrivals in an
-        # idle window all pick the primary before their leases register; self-correcting
-        # at typical concurrency. If the primary ever saturates under bursts, revisit
-        # here (e.g. refresh the snapshot after load_acquire).
-        return sorted(urls, key=lambda s: loads.get(s, 0))
+        # Tiered by saturation: inflight // per-server capacity (default 1).
+        # Servers still below their capacity tie at 0 and keep models.json order,
+        # so the first configured server is the primary until it is genuinely
+        # full — not merely busy. Counting raw inflight made one active request
+        # on a server that parallels dozens (a B200) look "busier" than an idle
+        # slow replica, spilling every overlapping request to the slow box.
+        # NB: loads are snapshotted once per request, so simultaneous arrivals in
+        # an idle window all pick the primary before their leases register; the
+        # lease snapshot self-corrects at typical concurrency. Saturation is
+        # refreshed per request just the same.
+        return sorted(urls, key=lambda s: loads.get(s, 0) // config.SERVER_CAPACITY.get(s, 1))
 
     tiered = [*by_load(healthy_servers), *by_load(capable_servers), *by_load(unknown_servers)]
 
