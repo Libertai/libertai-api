@@ -405,9 +405,9 @@ def test_streaming_upstream_success_observes_duration(monkeypatch, _reset_keys_m
     KeysManager().tiers = {"paid": "pro"}
 
     def upstream_count():
-        # Count lines are absent until the first observation, and other tests
-        # may already have observed this histogram (tests run in random order),
-        # so read the current value and diff it.
+        # Count lines are absent until the first observation, and the histogram
+        # lives in a shared process registry that other tests also increment, so
+        # read the current value and diff it.
         text = _scrape(monkeypatch)
         counts = [
             float(line.split()[-1])
