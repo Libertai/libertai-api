@@ -1,6 +1,5 @@
 import asyncio
 import json
-import random
 import time
 import uuid
 from http import HTTPStatus
@@ -342,10 +341,16 @@ async def proxy_request(
     unknown_servers = [s for s in all_servers if s not in healthy_set and s not in capable_set]
 
     def by_load(urls: list[str]) -> list[str]:
-        # Shuffle first: sorted() is stable, so equal-load servers would otherwise always
-        # come out in models.json order. Loads tie at 0 whenever traffic doesn't overlap,
-        # which pins all baseline traffic to the first configured server.
-        return sorted(random.sample(urls, len(urls)), key=lambda s: loads.get(s, 0))
+        # Stable sort: equal-load servers keep their models.json order, so the first
+        # configured server is the primary and the rest are overflow/failover. Loads
+        # tie at 0 whenever traffic doesn't overlap; a random tie-break there sent
+        # ~50% of baseline requests to slower heterogeneous replicas (glm-5.3 mixes
+        # a B200 with a 4x RTX 6000 box that is 3-4x slower per request).
+        # NB: loads are snapshotted once per request, so simultaneous arrivals in an
+        # idle window all pick the primary before their leases register; self-correcting
+        # at typical concurrency. If the primary ever saturates under bursts, revisit
+        # here (e.g. refresh the snapshot after load_acquire).
+        return sorted(urls, key=lambda s: loads.get(s, 0))
 
     tiered = [*by_load(healthy_servers), *by_load(capable_servers), *by_load(unknown_servers)]
 
