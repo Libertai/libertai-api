@@ -21,6 +21,7 @@ class _Config:
     BACKEND_API_URL: str
     BACKEND_SECRET_TOKEN: str
     MODELS: dict[str, list[str]]
+    SERVER_CAPACITY: dict[str, int]
     TELEGRAM_BOT_TOKEN: str
     TELEGRAM_CHAT_ID: str
     TELEGRAM_TOPIC_ID: str
@@ -93,6 +94,12 @@ class _Config:
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
         self.MODELS = {}
+        # Optional per-server overflow capacity: a models.json entry may be
+        # {"url": "...", "capacity": N} instead of a plain URL string. Capacity
+        # is how many concurrent requests a server absorbs before the gateway
+        # overflows to the next configured server (proxy.py saturation sort).
+        # Default 1 keeps the pre-capacity behavior for unconfigured servers.
+        self.SERVER_CAPACITY = {}
 
         # Configure logging
         log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -103,7 +110,28 @@ class _Config:
                 with open(models_config) as f:
                     models_data = json.load(f)
                     for model_name, servers in models_data.items():
-                        self.MODELS[model_name.lower()] = servers
+                        parsed_servers: list[str] = []
+                        for server in servers:
+                            if isinstance(server, dict):
+                                url = server.get("url")
+                                if not isinstance(url, str) or not url.strip():
+                                    logging.getLogger(__name__).error(
+                                        f"Invalid server entry {server!r} for model "
+                                        f"'{model_name}' in {models_config}: missing url; skipping"
+                                    )
+                                    continue
+                                parsed_servers.append(url)
+                                capacity = server.get("capacity", 1)
+                                if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
+                                    logging.getLogger(__name__).warning(
+                                        f"Invalid capacity {capacity!r} for {url} in {models_config}; "
+                                        f"using 1"
+                                    )
+                                else:
+                                    self.SERVER_CAPACITY[url] = capacity
+                            else:
+                                parsed_servers.append(server)
+                        self.MODELS[model_name.lower()] = parsed_servers
             except json.JSONDecodeError as error:
                 logging.getLogger(__name__).error(f"Error parsing {models_config}: {error}", exc_info=True)
 

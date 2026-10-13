@@ -88,3 +88,19 @@ def test_aleph_aggregate_address_defaults_and_env(monkeypatch):
 
     monkeypatch.setenv("ALEPH_AGGREGATE_ADDRESS", "0xe1F7220D201C64871Cefb25320a8a588393eE508")
     assert _Config().ALEPH_AGGREGATE_ADDRESS == "0xe1F7220D201C64871Cefb25320a8a588393eE508"
+
+
+def test_models_config_plain_and_capacity_entries(tmp_path, monkeypatch):
+    # A models.json entry may be a plain URL string or {"url": ..., "capacity": N}.
+    # MODELS stays dict[str, list[str]] for every consumer; capacities land in
+    # SERVER_CAPACITY, unconfigured servers defaulting to 1.
+    models = tmp_path / "models.json"
+    models.write_text(
+        '{"m": ["http://plain", {"url": "http://big", "capacity": 32}, '
+        '{"url": "http://bad-cap", "capacity": "lots"}, {"url": ""}]}'
+    )
+    monkeypatch.setenv("MODELS_CONFIG", str(models))
+    cfg = _Config()
+
+    assert cfg.MODELS == {"m": ["http://plain", "http://big", "http://bad-cap"]}
+    assert cfg.SERVER_CAPACITY == {"http://big": 32}
