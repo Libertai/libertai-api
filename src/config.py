@@ -40,6 +40,7 @@ class _Config:
     FREE_HARD_LOAD: int
     MAX_BODY_SIZE_MB: int
     METRICS_TOKEN: str
+    PROMETHEUS_MULTIPROC_DIR: str
 
     LOG_LEVEL: int
 
@@ -95,6 +96,15 @@ class _Config:
         # Token required to scrape /metrics (?token=...). Metrics expose business
         # behavior, so the endpoint stays locked (401) until this is configured.
         self.METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
+
+        # Optional prometheus_client multiprocess mode (WEB_CONCURRENCY > 1): a
+        # writable directory where each worker writes its counter/histogram
+        # files and every scrape merges them. Empty keeps the single-process
+        # in-memory registry. The app never clears it: parallel workers would
+        # wipe each other's files, so the deployment (e.g. tmpfs) must start
+        # empty and the app does not create it — a typo fails loudly instead of
+        # silently writing elsewhere.
+        self.PROMETHEUS_MULTIPROC_DIR = os.getenv("PROMETHEUS_MULTIPROC_DIR", "")
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")

@@ -1,5 +1,10 @@
 """Tests for the Prometheus instrumentation (src/metrics.py + proxy point increments)."""
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -12,6 +17,7 @@ from src.metrics import _endpoint_label
 from src.server import app
 
 TOKEN = "test-token"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _client():
@@ -95,12 +101,13 @@ def _metric_value(text: str, prefix: str) -> float:
 def _two_server_stub(monkeypatch, first: httpx.Response, second: httpx.Response) -> None:
     """Serve a canned response per upstream host, forcing a-then-b attempt order.
 
-    The request key is unknown, so the gate fails open and no x402 stubs are
-    needed; tests that need a known key seed KeysManager themselves.
+    Both servers are below their capacity with zero load, so the saturation
+    sort keeps models.json order (a first). The request key is unknown, so the
+    gate fails open and no x402 stubs are needed; tests that need a known key
+    seed KeysManager themselves.
     """
     monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://a", "http://b"]})
     monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
-    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
 
     async def _loads(_model):
         return {"http://a": 0, "http://b": 0}
@@ -631,3 +638,40 @@ def test_wait_then_hard_reject_observes_gate_wait(monkeypatch, _reset_keys_manag
     wait_lines = [line for line in text.splitlines() if line.startswith("libertai_gate_wait_seconds_bucket")]
     assert any('model="m"' in line for line in wait_lines)
     assert 'libertai_gate_rejections_total{model="m"}' in text
+
+
+def _run_multiprocess(directory: Path, body: str) -> str:
+    """Run a snippet in a fresh interpreter with multiprocess metrics enabled.
+
+    A fresh interpreter per phase matters: prometheus_client picks its value
+    class (mmap files vs in-memory) from the env var at import time, which is
+    exactly how uvicorn's spawned workers behave.
+    """
+    env = {**os.environ, "PROMETHEUS_MULTIPROC_DIR": str(directory)}
+    code = "from src.metrics import http_requests_total, _render_metrics\n" + body
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
+def test_multiprocess_mode_sums_across_workers(tmp_path):
+    # Two worker processes write the same series, then any process renders the
+    # merged total — the uvicorn-multiprocess layout. The exited workers' files
+    # must keep contributing (counters stay monotonic), which is why no
+    # cleanup hook is needed for counters/histograms.
+    directory = tmp_path / "multiproc"
+    directory.mkdir()
+
+    inc_line = 'http_requests_total.labels("health", "GET", "200").inc({})\n'
+    _run_multiprocess(directory, inc_line.format(1))
+    _run_multiprocess(directory, inc_line.format(2))
+
+    text = _run_multiprocess(directory, "print(_render_metrics().decode(), end='')\n")
+
+    assert 'libertai_http_requests_total{endpoint="health",method="GET",status="200"} 3.0' in text
