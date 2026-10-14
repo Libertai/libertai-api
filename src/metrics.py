@@ -97,6 +97,9 @@ upstream_request_duration_seconds = Histogram(
     buckets=_DURATION_BUCKETS,
 )
 
+# Path -> bounded endpoint label. Keep in sync with the app's route table: a
+# route missing here still counts, but collapses into "other" (bounded, less
+# visible to dashboards).
 _ENDPOINT_BY_PATH = {
     "/v1/chat/completions": "chat_completions",
     "/v1/completions": "completions",
