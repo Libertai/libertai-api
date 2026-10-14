@@ -32,7 +32,9 @@ _DURATION_BUCKETS = (0.1, 0.3, 1.2, 5, 15, 60, 300, 600)
 # FREE_GATE_MAX_WAIT + FREE_GATE_POLL_INTERVAL (~5.5s); the derived tail bucket
 # keeps the timed-out case finite rather than in +Inf, with one poll of margin
 # for scheduling overshoot. Derived, not hard-coded, so the buckets track the
-# pacing constants if they ever change.
+# pacing constants if they ever change — but that only holds while
+# FREE_GATE_MAX_WAIT stays above 1.2, or the tuple would be unsorted and
+# Histogram(...) would raise at import.
 _GATE_WAIT_BUCKETS = (
     0.1,
     0.3,
@@ -58,9 +60,10 @@ http_request_duration_seconds = Histogram(
 # Business-level (collecting in src/proxy.py at the decision points).
 requests_total = Counter(
     "libertai_requests_total",
-    "Proxy requests past auth/model checks, by resolved model and tier "
-    "(x402/unknown/free/paid); 402 responses surface on the transport counter "
-    'as libertai_http_requests_total{status="402"}.',
+    "Proxy requests past auth/model checks, including gate-rejected ones "
+    "(gate_rejections_total is the free-tier subset), by resolved model and tier "
+    "(x402/unknown/free/paid); 402 responses surface on the transport counter as "
+    'libertai_http_requests_total{status="402"}.',
     ["model", "tier"],
 )
 metrics_auth_failures_total = Counter(

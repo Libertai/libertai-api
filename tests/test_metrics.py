@@ -76,6 +76,48 @@ def _scrape(monkeypatch):
     return resp.text
 
 
+def _streamed(status: int, body: bytes) -> httpx.Response:
+    """A response whose body is still unread, as client.send(stream=True) returns."""
+
+    async def _chunks():
+        yield body
+
+    return httpx.Response(status, content=_chunks(), headers={"Content-Type": "application/json"})
+
+
+def _metric_value(text: str, prefix: str) -> float:
+    """Sample value of the single series matching prefix, or 0.0 when absent."""
+    lines = [line for line in text.splitlines() if line.startswith(prefix)]
+    return float(lines[0].split()[-1]) if lines else 0.0
+
+
+def _two_server_stub(monkeypatch, first: httpx.Response, second: httpx.Response) -> None:
+    """Serve a canned response per upstream host, forcing a-then-b attempt order.
+
+    The request key is unknown, so the gate fails open and no x402 stubs are
+    needed; tests that need a known key seed KeysManager themselves.
+    """
+    monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://a", "http://b"]})
+    monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
+    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
+
+    async def _loads(_model):
+        return {"http://a": 0, "http://b": 0}
+
+    async def _noop(*args, **kwargs):
+        return None
+
+    async def _send(req, **kwargs):
+        resp = first if req.url.host == "a" else second
+        resp.request = req
+        return resp
+
+    monkeypatch.setattr(proxy, "get_model_loads", _loads)
+    monkeypatch.setattr(proxy, "load_acquire", _noop)
+    monkeypatch.setattr(proxy, "load_release", _noop)
+    monkeypatch.setattr(proxy.client, "send", _send)
+
+
 def test_metrics_disabled_when_token_unset(monkeypatch):
     monkeypatch.setattr(config, "METRICS_TOKEN", "")
     assert _client().get("/metrics").status_code == 401
@@ -220,6 +262,13 @@ def test_metrics_rejects_non_get_methods(monkeypatch):
     assert _client().post("/metrics", json={}).status_code == 405
 
 
+def test_metrics_head_request_works(monkeypatch):
+    # HEAD is allowed alongside GET; the exposition body is server-suppressed.
+    monkeypatch.setattr(config, "METRICS_TOKEN", TOKEN)
+    resp = _client().head("/metrics", params={"token": TOKEN})
+    assert resp.status_code == 200
+
+
 def test_gate_rejection_and_tier_metrics(monkeypatch, _reset_keys_manager):
     _gate_thresholds(monkeypatch)
     sends = _stub_forwarding(monkeypatch)
@@ -252,6 +301,67 @@ def test_admitted_request_counts_upstream_failure(monkeypatch, _reset_keys_manag
     text = _scrape(monkeypatch)
     assert 'libertai_requests_total{model="m",tier="paid"}' in text
     assert 'libertai_upstream_failures_total{model="m",server="http://up"}' in text
+
+
+def test_5xx_failover_counts_upstream_failure(monkeypatch):
+    _two_server_stub(monkeypatch, _streamed(500, b"boom"), _streamed(200, b'{"ok": true}'))
+
+    prefix = 'libertai_upstream_failures_total{model="m",server="http://a"}'
+    before = _metric_value(_scrape(monkeypatch), prefix)
+    resp = _post_with_key("nobody")
+    after = _metric_value(_scrape(monkeypatch), prefix)
+
+    assert resp.status_code == 200
+    assert after - before == 1
+
+
+def test_401_sync_retry_counts_upstream_failure(monkeypatch, _reset_keys_manager):
+    _two_server_stub(monkeypatch, _streamed(401, b"unauthorized"), _streamed(200, b'{"ok": true}'))
+    KeysManager().keys = {"sync"}
+    KeysManager().tiers = {"sync": "pro"}
+
+    prefix = 'libertai_upstream_failures_total{model="m",server="http://a"}'
+    before = _metric_value(_scrape(monkeypatch), prefix)
+    resp = _post_with_key("sync")
+    after = _metric_value(_scrape(monkeypatch), prefix)
+
+    assert resp.status_code == 200
+    assert after - before == 1
+
+
+def test_context_length_retry_counts_upstream_failure(monkeypatch):
+    too_long = (
+        b'{"error":{"message":"This model\'s maximum context length is 200000 tokens. However, you '
+        b'requested 32768 output tokens and your prompt contains at least 167233 input tokens.",'
+        b'"type":"BadRequestError","param":"input_tokens","code":400}}'
+    )
+    _two_server_stub(monkeypatch, _streamed(400, too_long), _streamed(200, b'{"ok": true}'))
+
+    prefix = 'libertai_upstream_failures_total{model="m",server="http://a"}'
+    before = _metric_value(_scrape(monkeypatch), prefix)
+    resp = _post_with_key("nobody")
+    after = _metric_value(_scrape(monkeypatch), prefix)
+
+    assert resp.status_code == 200
+    assert after - before == 1
+
+
+def test_tee_failure_counts_upstream_failure(monkeypatch):
+    sends = _stub_forwarding(monkeypatch)
+
+    async def _boom(server, client):
+        raise RuntimeError("tee target down")
+
+    monkeypatch.setattr(proxy.tee, "target", _boom)
+
+    prefix = 'libertai_upstream_failures_total{model="m",server="http://up"}'
+    before = _metric_value(_scrape(monkeypatch), prefix)
+    resp = _post_with_key("nobody")
+    after = _metric_value(_scrape(monkeypatch), prefix)
+
+    assert resp.status_code == 503
+    assert sends == []
+    assert after - before == 1
 
 
 def test_unknown_tier_key_fails_open_and_is_admitted(monkeypatch, _reset_keys_manager):
