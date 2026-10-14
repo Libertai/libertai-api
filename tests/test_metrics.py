@@ -482,10 +482,6 @@ def test_unverified_x402_402_surfaces_only_on_transport_counter(monkeypatch):
         lambda requirements: JSONResponse(status_code=402, content={"x402": True}),
     )
 
-    def sample_value(text, prefix):
-        lines = [line for line in text.splitlines() if line.startswith(prefix)]
-        return float(lines[0].split()[-1]) if lines else 0.0
-
     tier_line = 'libertai_requests_total{model="m",tier="x402"}'
     transport_line = 'libertai_http_requests_total{endpoint="chat_completions",method="POST",status="402"}'
 
@@ -495,8 +491,8 @@ def test_unverified_x402_402_surfaces_only_on_transport_counter(monkeypatch):
 
     assert resp.status_code == 402
     assert resp.json() == {"x402": True}
-    assert sample_value(after, tier_line) == sample_value(before, tier_line)
-    assert sample_value(after, transport_line) - sample_value(before, transport_line) == 1
+    assert _metric_value(after, tier_line) == _metric_value(before, tier_line)
+    assert _metric_value(after, transport_line) - _metric_value(before, transport_line) == 1
 
 
 def test_soft_load_wait_and_upstream_success_metrics(monkeypatch, _reset_keys_manager):

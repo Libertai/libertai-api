@@ -61,7 +61,9 @@ requests_total = Counter(
 )
 metrics_auth_failures_total = Counter(
     "libertai_metrics_auth_failures_total",
-    "Rejected attempts to read /metrics (missing, wrong, or malformed token).",
+    "Rejected attempts to read /metrics (missing, wrong, or malformed token). "
+    "Unauthenticated clients can inflate it, so alert on rate anomalies rather "
+    "than absolute counts.",
 )
 gate_rejections_total = Counter(
     "libertai_gate_rejections_total",
@@ -152,6 +154,10 @@ class MetricsMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        # Exact, case-sensitive match: path variants ("/metrics/", "/METRICS")
+        # fall through to normal routing and get a redirect or 404 — they never
+        # bypass the gate, and enforcing the exact form keeps the intercept
+        # unambiguous.
         if scope["path"] == "/metrics":
             if scope["method"] not in ("GET", "HEAD"):
                 response = JSONResponse(
