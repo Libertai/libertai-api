@@ -8,6 +8,7 @@ from starlette.routing import Route
 from src import proxy
 from src.api_keys import KeysManager
 from src.config import config
+from src.metrics import _endpoint_label
 from src.server import app
 
 TOKEN = "test-token"
@@ -225,6 +226,18 @@ def test_metrics_not_exposed_in_openapi_docs():
     resp = _client().get("/openapi.json")
     assert resp.status_code == 200
     assert "/metrics" not in resp.json()["paths"]
+
+
+def test_endpoint_map_covers_every_registered_route():
+    # The proxy endpoints are served by the {full_path} catch-all (invisible in
+    # the OpenAPI schema), so only concrete paths are checked: a new route must
+    # gain a label or its traffic silently collapses into "other". This would
+    # have caught the dead /aleph-credits key, which never matched the route
+    # actually mounted at /libertai/aleph-credits.
+    concrete = [path for path in app.openapi()["paths"] if "{" not in path]
+    assert concrete
+    for path in concrete:
+        assert _endpoint_label(path) != "other", path
 
 
 def test_metrics_scrape_lists_all_metric_families(monkeypatch):

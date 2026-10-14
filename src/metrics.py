@@ -32,17 +32,9 @@ _DURATION_BUCKETS = (0.1, 0.3, 1.2, 5, 15, 60, 300, 600)
 # The gate checks its deadline before each poll sleep, so a real wait can reach
 # FREE_GATE_MAX_WAIT + FREE_GATE_POLL_INTERVAL (~5.5s); the derived tail bucket
 # keeps the timed-out case finite rather than in +Inf, with one poll of margin
-# for scheduling overshoot. Derived, not hard-coded, so the buckets track the
-# pacing constants if they ever change — but that only holds while
-# FREE_GATE_MAX_WAIT stays above 1.2, or the tuple would be unsorted and
-# Histogram(...) would raise at import.
-_GATE_WAIT_BUCKETS = (
-    0.1,
-    0.3,
-    1.2,
-    FREE_GATE_MAX_WAIT,
-    FREE_GATE_MAX_WAIT + 2 * FREE_GATE_POLL_INTERVAL,
-)
+# for scheduling overshoot. sorted() makes the ascending invariant structural:
+# Histogram rejects an unsorted sequence at import.
+_GATE_WAIT_BUCKETS = sorted({0.1, 0.3, 1.2, FREE_GATE_MAX_WAIT, FREE_GATE_MAX_WAIT + 2 * FREE_GATE_POLL_INTERVAL})
 
 # Transport-level (collecting middleware): endpoint/method/status only.
 http_requests_total = Counter(
@@ -113,7 +105,7 @@ _ENDPOINT_BY_PATH = {
     "/openrouter/models": "models",
     "/libertai/models": "models",
     "/libertai/auth/check": "auth",
-    "/aleph-credits": "aleph_credits",
+    "/libertai/aleph-credits": "aleph_credits",
     "/search": "search",
     "/search/fetch": "search_fetch",
     "/health": "health",
