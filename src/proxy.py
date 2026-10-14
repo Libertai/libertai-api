@@ -559,7 +559,10 @@ async def proxy_request(
             continue
 
         except Exception as e:
-            # Other errors - log and fail immediately
+            # Other errors - log and fail immediately. Deliberately not counted
+            # in upstream_failures_total: this is a proxy-side abort (e.g. a
+            # mid-forward ReadError), not a per-server abandonment in favor of
+            # failover — the transport counter records the resulting 500.
             logger.error(f"Error forwarding request to {url}: {type(e).__name__}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Error forwarding request: {type(e).__name__}: {e!s}")
 

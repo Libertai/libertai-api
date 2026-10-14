@@ -9,7 +9,8 @@ traffic. Failed token attempts are counted only by
 libertai_metrics_auth_failures_total and never reach the transport counters;
 non-GET/HEAD attempts are answered 405 and counted nowhere, so probing both
 kinds of misuse shows up only in the proxy access logs (and the auth-failure
-counter) while keeping the scrape path quiet.
+counter) while keeping the scrape path quiet. Setting METRICS_TOKEN to the
+literal "public" opts into unauthenticated access; unset still means 401.
 """
 
 from __future__ import annotations
@@ -202,7 +203,10 @@ class MetricsMiddleware:
 
     async def _serve_metrics(self, scope: Scope, receive: Receive, send: Send) -> None:
         token = config.METRICS_TOKEN
-        if token and _token_matches(Request(scope), token):
+        if token == "public":
+            # Explicit open-access opt-in: no credential required or checked.
+            response = Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+        elif token and _token_matches(Request(scope), token):
             response = Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
         else:
             # Uniform 401 body: an unauthenticated prober must not learn whether

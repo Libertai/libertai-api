@@ -126,6 +126,20 @@ def test_metrics_disabled_when_token_unset(monkeypatch):
     assert sample and float(sample[-1].split()[-1]) >= 1
 
 
+def test_metrics_public_mode_allows_open_access(monkeypatch):
+    # METRICS_TOKEN=public is the explicit opt-in for unauthenticated access:
+    # no credential is required, none is checked, and no auth failure counted.
+    monkeypatch.setattr(config, "METRICS_TOKEN", "public")
+    before = _metric_value(_scrape(monkeypatch), "libertai_metrics_auth_failures_total")
+    monkeypatch.setattr(config, "METRICS_TOKEN", "public")
+    client = _client()
+    assert client.get("/metrics").status_code == 200
+    assert client.get("/metrics?token=anything").status_code == 200
+    assert client.get("/metrics", headers={"Authorization": "Bearer nope"}).status_code == 200
+    after = _metric_value(_scrape(monkeypatch), "libertai_metrics_auth_failures_total")
+    assert after == before
+
+
 def test_metrics_rejects_missing_or_wrong_token(monkeypatch):
     monkeypatch.setattr(config, "METRICS_TOKEN", TOKEN)
     client = _client()
@@ -555,16 +569,10 @@ def test_streaming_upstream_success_observes_duration(monkeypatch, _reset_keys_m
     KeysManager().tiers = {"paid": "pro"}
 
     def upstream_count():
-        # Count lines are absent until the first observation, and the histogram
-        # lives in a shared process registry that other tests also increment, so
-        # read the current value and diff it.
-        text = _scrape(monkeypatch)
-        counts = [
-            float(line.split()[-1])
-            for line in text.splitlines()
-            if line.startswith("libertai_upstream_request_duration_seconds_count")
-        ]
-        return counts[0] if counts else 0.0
+        # Diff the current value for this model only: the histogram lives in a
+        # shared process registry that other tests also increment, and other
+        # models' children may render before "m".
+        return _metric_value(_scrape(monkeypatch), 'libertai_upstream_request_duration_seconds_count{model="m"}')
 
     before = upstream_count()
     resp = _post_with_key("paid")
