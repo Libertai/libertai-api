@@ -640,6 +640,31 @@ def test_wait_then_hard_reject_observes_gate_wait(monkeypatch, _reset_keys_manag
     assert 'libertai_gate_rejections_total{model="m"}' in text
 
 
+def _multiproc_env(**overrides: str) -> dict[str, str]:
+    """Environment for a child interpreter, scrubbed of both multiproc names.
+
+    Either spelling changes prometheus_client's value class at import, so a
+    leaked outer value would mask the normalization under test.
+    """
+    env = {k: v for k, v in os.environ.items() if k.lower() != "prometheus_multiproc_dir"}
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    env.update(overrides)
+    return env
+
+
+def _run_isolated(cwd: Path, env: dict[str, str], code: str) -> str:
+    """Run a snippet in a fresh interpreter and return its stdout."""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
 def _run_multiprocess(directory: Path, body: str) -> str:
     """Run a snippet in a fresh interpreter with multiprocess metrics enabled.
 
@@ -647,17 +672,9 @@ def _run_multiprocess(directory: Path, body: str) -> str:
     class (mmap files vs in-memory) from the env var at import time, which is
     exactly how uvicorn's spawned workers behave.
     """
-    env = {**os.environ, "PROMETHEUS_MULTIPROC_DIR": str(directory)}
+    env = _multiproc_env(PROMETHEUS_MULTIPROC_DIR=str(directory))
     code = "from src.metrics import http_requests_total, _render_metrics\n" + body
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout
+    return _run_isolated(REPO_ROOT, env, code)
 
 
 def test_multiprocess_mode_sums_across_workers(tmp_path):
@@ -682,26 +699,40 @@ def test_blank_multiproc_env_is_normalized_to_unset(tmp_path, value):
     # prometheus_client enables mmap mode on the env var's *presence*, even
     # empty or blank; config must normalize those to unset before that import,
     # or workers write stray counter files to the cwd while /metrics renders
-    # the single-process registry. The child runs in tmp_path, so a regression
-    # leaves its db files there.
-    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT), "PROMETHEUS_MULTIPROC_DIR": value}
+    # the single-process registry. The child imports src.metrics first — the
+    # standalone order that does not go through src.server — so this also pins
+    # that the normalize-before-freeze invariant is local to metrics.py. The
+    # child runs in tmp_path, so a regression leaves its db files there.
+    env = _multiproc_env(PROMETHEUS_MULTIPROC_DIR=value)
     code = (
         "import os\n"
-        "from src.config import config\n"
         "from src.metrics import _render_metrics\n"
+        "from src.config import config\n"
         "import prometheus_client.values as values\n"
         "assert config.PROMETHEUS_MULTIPROC_DIR == ''\n"
         "assert 'PROMETHEUS_MULTIPROC_DIR' not in os.environ\n"
         "assert values.ValueClass.__name__ == 'MutexValue'\n"
         "print('ok', end='')\n"
     )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
+    assert _run_isolated(tmp_path, env, code) == "ok"
+    assert list(tmp_path.glob("*.db")) == []  # no stray multiprocess files
+
+
+def test_deprecated_lowercase_multiproc_env_is_dropped(tmp_path):
+    # prometheus_client presence-checks the deprecated lowercase spelling too;
+    # a stale value would flip workers to mmap while config stays unset, so the
+    # scrape would render the single-process registry and the merge would
+    # silently never happen. Config drops the lowercase name so both agree.
+    env = _multiproc_env(prometheus_multiproc_dir=str(tmp_path))
+    code = (
+        "import os\n"
+        "from src.metrics import _render_metrics\n"
+        "from src.config import config\n"
+        "import prometheus_client.values as values\n"
+        "assert config.PROMETHEUS_MULTIPROC_DIR == ''\n"
+        "assert 'prometheus_multiproc_dir' not in os.environ\n"
+        "assert values.ValueClass.__name__ == 'MutexValue'\n"
+        "print('ok', end='')\n"
     )
-    assert result.stdout == "ok"
+    assert _run_isolated(tmp_path, env, code) == "ok"
     assert list(tmp_path.glob("*.db")) == []  # no stray multiprocess files

@@ -113,6 +113,11 @@ class _Config:
             os.environ["PROMETHEUS_MULTIPROC_DIR"] = multiproc_dir
         else:
             os.environ.pop("PROMETHEUS_MULTIPROC_DIR", None)
+        # prometheus_client also presence-checks the deprecated lowercase
+        # spelling; a stale value there would flip workers to mmap mode while
+        # this config (and the render branch) stay unset, so the merge would
+        # silently never happen. Drop it so both mode checks agree.
+        os.environ.pop("prometheus_multiproc_dir", None)
         self.PROMETHEUS_MULTIPROC_DIR = multiproc_dir
 
         # Load models configuration from environment variable or file

@@ -22,6 +22,14 @@ from __future__ import annotations
 import hmac
 import time
 
+# isort: split
+# The config import must precede prometheus_client, which freezes mmap vs
+# in-memory mode from the raw environment at import time (presence, even
+# blank). Importing config first normalizes a blank PROMETHEUS_MULTIPROC_DIR
+# to unset, so the mode decision and _render_metrics' branch always agree —
+# for every importer of this module, not just those that load src.server
+# first. Do not sort this back.
+from src.config import config  # noqa: I001  (must precede prometheus_client)
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
@@ -34,7 +42,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from src.config import config
 from src.constants import FREE_GATE_MAX_WAIT, FREE_GATE_POLL_INTERVAL
 
 # Latency is dominated by upstream inference (seconds to minutes), so buckets
@@ -232,11 +239,12 @@ def _render_metrics() -> bytes:
     In multiprocess mode the global registry holds per-process value objects
     that write into PROMETHEUS_MULTIPROC_DIR; rendering it directly would be
     wrong, so a fresh registry with the MultiProcessCollector is used instead.
-    Branching agrees with prometheus_client's mode detection because config
-    normalizes blank values to unset before that library is imported. A
-    configured-but-missing directory crashes at import of this module (the
-    unlabeled counter opens its mmap file eagerly), so misconfiguration fails
-    loudly at startup rather than at scrape time.
+    Branching agrees with prometheus_client's mode detection because this
+    module imports config (which normalizes blank values to unset) above the
+    library import, so the mode freeze and the branch decision cannot diverge,
+    whatever imports this module. A configured-but-missing directory crashes at
+    import of this module (the unlabeled counter opens its mmap file eagerly),
+    so misconfiguration fails loudly at startup rather than at scrape time.
     """
     if config.PROMETHEUS_MULTIPROC_DIR:
         registry = CollectorRegistry()
