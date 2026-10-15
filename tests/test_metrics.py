@@ -738,3 +738,16 @@ def test_deprecated_lowercase_multiproc_env_is_dropped(tmp_path):
     assert result.stdout == "ok"
     assert "prometheus_multiproc_dir is deprecated and ignored" in result.stderr
     assert list(tmp_path.glob("*.db")) == []  # no stray multiprocess files
+
+
+def test_missing_multiproc_dir_fails_at_import(tmp_path):
+    # Failing loudly at startup is deliberate: the unlabeled counter opens its
+    # mmap file eagerly, so src.metrics refuses to import when the configured
+    # directory is missing (the deployment owns it: tmpfs, exists, starts
+    # empty) instead of deferring the error to scrape time. This pins that
+    # claim, which _render_metrics' docstring documents.
+    env = _multiproc_env(PROMETHEUS_MULTIPROC_DIR=str(tmp_path / "missing"))
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        _run_isolated(tmp_path, env, "from src.metrics import _render_metrics\n")
+    assert "FileNotFoundError" in excinfo.value.stderr
+    assert str(tmp_path / "missing") in excinfo.value.stderr
