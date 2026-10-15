@@ -99,12 +99,21 @@ class _Config:
 
         # Optional prometheus_client multiprocess mode (WEB_CONCURRENCY > 1): a
         # writable directory where each worker writes its counter/histogram
-        # files and every scrape merges them. Empty keeps the single-process
-        # in-memory registry. The app never clears it: parallel workers would
-        # wipe each other's files, so the deployment (e.g. tmpfs) must start
-        # empty and the app does not create it — a typo fails loudly instead of
-        # silently writing elsewhere.
-        self.PROMETHEUS_MULTIPROC_DIR = os.getenv("PROMETHEUS_MULTIPROC_DIR", "")
+        # files and every scrape merges them. prometheus_client enables mmap
+        # mode on the variable's *presence* (even empty), so blank values —
+        # e.g. a shipped "PROMETHEUS_MULTIPROC_DIR=" line — are normalized to
+        # unset here, before prometheus_client is imported; otherwise workers
+        # would write stray db files to the cwd while the scrape renders the
+        # single-process registry. The app never clears the directory:
+        # parallel workers would wipe each other's files, so the deployment
+        # (e.g. tmpfs) must start empty, and the app does not create it — a
+        # typo fails loudly at startup instead of silently writing elsewhere.
+        multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR", "").strip()
+        if multiproc_dir:
+            os.environ["PROMETHEUS_MULTIPROC_DIR"] = multiproc_dir
+        else:
+            os.environ.pop("PROMETHEUS_MULTIPROC_DIR", None)
+        self.PROMETHEUS_MULTIPROC_DIR = multiproc_dir
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")

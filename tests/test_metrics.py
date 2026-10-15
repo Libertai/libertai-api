@@ -675,3 +675,33 @@ def test_multiprocess_mode_sums_across_workers(tmp_path):
     text = _run_multiprocess(directory, "print(_render_metrics().decode(), end='')\n")
 
     assert 'libertai_http_requests_total{endpoint="health",method="GET",status="200"} 3.0' in text
+
+
+@pytest.mark.parametrize("value", ["", " "])
+def test_blank_multiproc_env_is_normalized_to_unset(tmp_path, value):
+    # prometheus_client enables mmap mode on the env var's *presence*, even
+    # empty or blank; config must normalize those to unset before that import,
+    # or workers write stray counter files to the cwd while /metrics renders
+    # the single-process registry. The child runs in tmp_path, so a regression
+    # leaves its db files there.
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT), "PROMETHEUS_MULTIPROC_DIR": value}
+    code = (
+        "import os\n"
+        "from src.config import config\n"
+        "from src.metrics import _render_metrics\n"
+        "import prometheus_client.values as values\n"
+        "assert config.PROMETHEUS_MULTIPROC_DIR == ''\n"
+        "assert 'PROMETHEUS_MULTIPROC_DIR' not in os.environ\n"
+        "assert values.ValueClass.__name__ == 'MutexValue'\n"
+        "print('ok', end='')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout == "ok"
+    assert list(tmp_path.glob("*.db")) == []  # no stray multiprocess files

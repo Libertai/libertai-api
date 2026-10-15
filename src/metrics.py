@@ -232,7 +232,11 @@ def _render_metrics() -> bytes:
     In multiprocess mode the global registry holds per-process value objects
     that write into PROMETHEUS_MULTIPROC_DIR; rendering it directly would be
     wrong, so a fresh registry with the MultiProcessCollector is used instead.
-    A configured-but-missing directory raises here, loudly, as intended.
+    Branching agrees with prometheus_client's mode detection because config
+    normalizes blank values to unset before that library is imported. A
+    configured-but-missing directory crashes at import of this module (the
+    unlabeled counter opens its mmap file eagerly), so misconfiguration fails
+    loudly at startup rather than at scrape time.
     """
     if config.PROMETHEUS_MULTIPROC_DIR:
         registry = CollectorRegistry()
