@@ -116,8 +116,14 @@ class _Config:
         # prometheus_client also presence-checks the deprecated lowercase
         # spelling; a stale value there would flip workers to mmap mode while
         # this config (and the render branch) stay unset, so the merge would
-        # silently never happen. Drop it so both mode checks agree.
-        os.environ.pop("prometheus_multiproc_dir", None)
+        # silently never happen. Drop it so both mode checks agree, but warn:
+        # an operator who set the legacy name deliberately must not lose
+        # multiprocess mode without a signal.
+        if os.environ.pop("prometheus_multiproc_dir", None) is not None:
+            logging.getLogger(__name__).warning(
+                "prometheus_multiproc_dir is deprecated and ignored; rename it to "
+                "PROMETHEUS_MULTIPROC_DIR to enable multiprocess metrics"
+            )
         self.PROMETHEUS_MULTIPROC_DIR = multiproc_dir
 
         # Load models configuration from environment variable or file

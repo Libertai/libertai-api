@@ -652,9 +652,9 @@ def _multiproc_env(**overrides: str) -> dict[str, str]:
     return env
 
 
-def _run_isolated(cwd: Path, env: dict[str, str], code: str) -> str:
-    """Run a snippet in a fresh interpreter and return its stdout."""
-    result = subprocess.run(
+def _run_isolated(cwd: Path, env: dict[str, str], code: str) -> subprocess.CompletedProcess[str]:
+    """Run a snippet in a fresh interpreter and return the completed process."""
+    return subprocess.run(
         [sys.executable, "-c", code],
         cwd=cwd,
         env=env,
@@ -662,7 +662,6 @@ def _run_isolated(cwd: Path, env: dict[str, str], code: str) -> str:
         text=True,
         check=True,
     )
-    return result.stdout
 
 
 def _run_multiprocess(directory: Path, body: str) -> str:
@@ -674,7 +673,7 @@ def _run_multiprocess(directory: Path, body: str) -> str:
     """
     env = _multiproc_env(PROMETHEUS_MULTIPROC_DIR=str(directory))
     code = "from src.metrics import http_requests_total, _render_metrics\n" + body
-    return _run_isolated(REPO_ROOT, env, code)
+    return _run_isolated(REPO_ROOT, env, code).stdout
 
 
 def test_multiprocess_mode_sums_across_workers(tmp_path):
@@ -714,7 +713,7 @@ def test_blank_multiproc_env_is_normalized_to_unset(tmp_path, value):
         "assert values.ValueClass.__name__ == 'MutexValue'\n"
         "print('ok', end='')\n"
     )
-    assert _run_isolated(tmp_path, env, code) == "ok"
+    assert _run_isolated(tmp_path, env, code).stdout == "ok"
     assert list(tmp_path.glob("*.db")) == []  # no stray multiprocess files
 
 
@@ -722,7 +721,8 @@ def test_deprecated_lowercase_multiproc_env_is_dropped(tmp_path):
     # prometheus_client presence-checks the deprecated lowercase spelling too;
     # a stale value would flip workers to mmap while config stays unset, so the
     # scrape would render the single-process registry and the merge would
-    # silently never happen. Config drops the lowercase name so both agree.
+    # silently never happen. Config drops the lowercase name so both agree and
+    # warns, so a deliberate legacy config does not vanish without a signal.
     env = _multiproc_env(prometheus_multiproc_dir=str(tmp_path))
     code = (
         "import os\n"
@@ -734,5 +734,7 @@ def test_deprecated_lowercase_multiproc_env_is_dropped(tmp_path):
         "assert values.ValueClass.__name__ == 'MutexValue'\n"
         "print('ok', end='')\n"
     )
-    assert _run_isolated(tmp_path, env, code) == "ok"
+    result = _run_isolated(tmp_path, env, code)
+    assert result.stdout == "ok"
+    assert "prometheus_multiproc_dir is deprecated and ignored" in result.stderr
     assert list(tmp_path.glob("*.db")) == []  # no stray multiprocess files
