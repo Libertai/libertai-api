@@ -11,6 +11,10 @@ non-GET/HEAD attempts are answered 405 and counted nowhere, so probing both
 kinds of misuse shows up only in the proxy access logs (and the auth-failure
 counter) while keeping the scrape path quiet. Setting METRICS_TOKEN to the
 literal "public" opts into unauthenticated access; unset still means 401.
+With WEB_CONCURRENCY > 1, set PROMETHEUS_MULTIPROC_DIR so each worker writes
+its own counter/histogram files and every scrape merges them through
+prometheus_client's MultiProcessCollector; empty keeps the single-process
+in-memory registry.
 """
 
 from __future__ import annotations
@@ -18,12 +22,26 @@ from __future__ import annotations
 import hmac
 import time
 
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+# isort: split
+# The config import must precede prometheus_client, which freezes mmap vs
+# in-memory mode from the raw environment at import time (presence, even
+# blank). Importing config first normalizes a blank PROMETHEUS_MULTIPROC_DIR
+# to unset, so the mode decision and _render_metrics' branch always agree —
+# for every importer of this module, not just those that load src.server
+# first. Do not sort this back.
+from src.config import config  # noqa: I001  (must precede prometheus_client)
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Histogram,
+    generate_latest,
+    multiprocess,
+)
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from src.config import config
 from src.constants import FREE_GATE_MAX_WAIT, FREE_GATE_POLL_INTERVAL
 
 # Latency is dominated by upstream inference (seconds to minutes), so buckets
@@ -203,9 +221,9 @@ class MetricsMiddleware:
         token = config.METRICS_TOKEN
         if token == "public":
             # Explicit open-access opt-in: no credential required or checked.
-            response = Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+            response = Response(content=_render_metrics(), media_type=CONTENT_TYPE_LATEST)
         elif token and _token_matches(Request(scope), token):
-            response = Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+            response = Response(content=_render_metrics(), media_type=CONTENT_TYPE_LATEST)
         else:
             # Uniform 401 body: an unauthenticated prober must not learn whether
             # the endpoint is armed but mistyped, or not configured at all. Both
@@ -213,6 +231,26 @@ class MetricsMiddleware:
             metrics_auth_failures_total.inc()
             response = JSONResponse(status_code=401, content={"detail": "invalid token"})
         await response(scope, receive, send)
+
+
+def _render_metrics() -> bytes:
+    """Render the exposition, merging worker files when in multiprocess mode.
+
+    In multiprocess mode the global registry holds per-process value objects
+    that write into PROMETHEUS_MULTIPROC_DIR; rendering it directly would be
+    wrong, so a fresh registry with the MultiProcessCollector is used instead.
+    Branching agrees with prometheus_client's mode detection because this
+    module imports config (which normalizes blank values to unset) above the
+    library import, so the mode freeze and the branch decision cannot diverge,
+    whatever imports this module. A configured-but-missing directory crashes at
+    import of this module (the unlabeled counter opens its mmap file eagerly),
+    so misconfiguration fails loudly at startup rather than at scrape time.
+    """
+    if config.PROMETHEUS_MULTIPROC_DIR:
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry, config.PROMETHEUS_MULTIPROC_DIR)
+        return generate_latest(registry)
+    return generate_latest()
 
 
 def _token_matches(request: Request, token: str) -> bool:

@@ -1,5 +1,10 @@
 """Tests for the Prometheus instrumentation (src/metrics.py + proxy point increments)."""
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -12,6 +17,7 @@ from src.metrics import _endpoint_label
 from src.server import app
 
 TOKEN = "test-token"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _client():
@@ -95,12 +101,13 @@ def _metric_value(text: str, prefix: str) -> float:
 def _two_server_stub(monkeypatch, first: httpx.Response, second: httpx.Response) -> None:
     """Serve a canned response per upstream host, forcing a-then-b attempt order.
 
-    The request key is unknown, so the gate fails open and no x402 stubs are
-    needed; tests that need a known key seed KeysManager themselves.
+    Both servers are below their capacity with zero load, so the saturation
+    sort keeps models.json order (a first). The request key is unknown, so the
+    gate fails open and no x402 stubs are needed; tests that need a known key
+    seed KeysManager themselves.
     """
     monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://a", "http://b"]})
     monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
-    monkeypatch.setattr(proxy.random, "sample", lambda urls, n: list(urls))
 
     async def _loads(_model):
         return {"http://a": 0, "http://b": 0}
@@ -631,3 +638,116 @@ def test_wait_then_hard_reject_observes_gate_wait(monkeypatch, _reset_keys_manag
     wait_lines = [line for line in text.splitlines() if line.startswith("libertai_gate_wait_seconds_bucket")]
     assert any('model="m"' in line for line in wait_lines)
     assert 'libertai_gate_rejections_total{model="m"}' in text
+
+
+def _multiproc_env(**overrides: str) -> dict[str, str]:
+    """Environment for a child interpreter, scrubbed of both multiproc names.
+
+    Either spelling changes prometheus_client's value class at import, so a
+    leaked outer value would mask the normalization under test.
+    """
+    env = {k: v for k, v in os.environ.items() if k.lower() != "prometheus_multiproc_dir"}
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    env.update(overrides)
+    return env
+
+
+def _run_isolated(cwd: Path, env: dict[str, str], code: str) -> subprocess.CompletedProcess[str]:
+    """Run a snippet in a fresh interpreter and return the completed process."""
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def _run_multiprocess(directory: Path, body: str) -> str:
+    """Run a snippet in a fresh interpreter with multiprocess metrics enabled.
+
+    A fresh interpreter per phase matters: prometheus_client picks its value
+    class (mmap files vs in-memory) from the env var at import time, which is
+    exactly how uvicorn's spawned workers behave.
+    """
+    env = _multiproc_env(PROMETHEUS_MULTIPROC_DIR=str(directory))
+    code = "from src.metrics import http_requests_total, _render_metrics\n" + body
+    return _run_isolated(REPO_ROOT, env, code).stdout
+
+
+def test_multiprocess_mode_sums_across_workers(tmp_path):
+    # Two worker processes write the same series, then any process renders the
+    # merged total — the uvicorn-multiprocess layout. The exited workers' files
+    # must keep contributing (counters stay monotonic), which is why no
+    # cleanup hook is needed for counters/histograms.
+    directory = tmp_path / "multiproc"
+    directory.mkdir()
+
+    inc_line = 'http_requests_total.labels("health", "GET", "200").inc({})\n'
+    _run_multiprocess(directory, inc_line.format(1))
+    _run_multiprocess(directory, inc_line.format(2))
+
+    text = _run_multiprocess(directory, "print(_render_metrics().decode(), end='')\n")
+
+    assert 'libertai_http_requests_total{endpoint="health",method="GET",status="200"} 3.0' in text
+
+
+@pytest.mark.parametrize("value", ["", " "])
+def test_blank_multiproc_env_is_normalized_to_unset(tmp_path, value):
+    # prometheus_client enables mmap mode on the env var's *presence*, even
+    # empty or blank; config must normalize those to unset before that import,
+    # or workers write stray counter files to the cwd while /metrics renders
+    # the single-process registry. The child imports src.metrics first — the
+    # standalone order that does not go through src.server — so this also pins
+    # that the normalize-before-freeze invariant is local to metrics.py. The
+    # child runs in tmp_path, so a regression leaves its db files there.
+    env = _multiproc_env(PROMETHEUS_MULTIPROC_DIR=value)
+    code = (
+        "import os\n"
+        "from src.metrics import _render_metrics\n"
+        "from src.config import config\n"
+        "import prometheus_client.values as values\n"
+        "assert config.PROMETHEUS_MULTIPROC_DIR == ''\n"
+        "assert 'PROMETHEUS_MULTIPROC_DIR' not in os.environ\n"
+        "assert values.ValueClass.__name__ == 'MutexValue'\n"
+        "print('ok', end='')\n"
+    )
+    assert _run_isolated(tmp_path, env, code).stdout == "ok"
+    assert list(tmp_path.glob("*.db")) == []  # no stray multiprocess files
+
+
+def test_deprecated_lowercase_multiproc_env_is_dropped(tmp_path):
+    # prometheus_client presence-checks the deprecated lowercase spelling too;
+    # a stale value would flip workers to mmap while config stays unset, so the
+    # scrape would render the single-process registry and the merge would
+    # silently never happen. Config drops the lowercase name so both agree and
+    # warns, so a deliberate legacy config does not vanish without a signal.
+    env = _multiproc_env(prometheus_multiproc_dir=str(tmp_path))
+    code = (
+        "import os\n"
+        "from src.metrics import _render_metrics\n"
+        "from src.config import config\n"
+        "import prometheus_client.values as values\n"
+        "assert config.PROMETHEUS_MULTIPROC_DIR == ''\n"
+        "assert 'prometheus_multiproc_dir' not in os.environ\n"
+        "assert values.ValueClass.__name__ == 'MutexValue'\n"
+        "print('ok', end='')\n"
+    )
+    result = _run_isolated(tmp_path, env, code)
+    assert result.stdout == "ok"
+    assert "prometheus_multiproc_dir is deprecated and ignored" in result.stderr
+    assert list(tmp_path.glob("*.db")) == []  # no stray multiprocess files
+
+
+def test_missing_multiproc_dir_fails_at_import(tmp_path):
+    # Failing loudly at startup is deliberate: the unlabeled counter opens its
+    # mmap file eagerly, so src.metrics refuses to import when the configured
+    # directory is missing (the deployment owns it: tmpfs, exists, starts
+    # empty) instead of deferring the error to scrape time. This pins that
+    # claim, which _render_metrics' docstring documents.
+    env = _multiproc_env(PROMETHEUS_MULTIPROC_DIR=str(tmp_path / "missing"))
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        _run_isolated(tmp_path, env, "from src.metrics import _render_metrics\n")
+    assert "FileNotFoundError" in excinfo.value.stderr
+    assert str(tmp_path / "missing") in excinfo.value.stderr

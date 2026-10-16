@@ -40,6 +40,7 @@ class _Config:
     FREE_HARD_LOAD: int
     MAX_BODY_SIZE_MB: int
     METRICS_TOKEN: str
+    PROMETHEUS_MULTIPROC_DIR: str
 
     LOG_LEVEL: int
 
@@ -95,6 +96,35 @@ class _Config:
         # Token required to scrape /metrics (?token=...). Metrics expose business
         # behavior, so the endpoint stays locked (401) until this is configured.
         self.METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
+
+        # Optional prometheus_client multiprocess mode (WEB_CONCURRENCY > 1): a
+        # writable directory where each worker writes its counter/histogram
+        # files and every scrape merges them. prometheus_client enables mmap
+        # mode on the variable's *presence* (even empty), so blank values —
+        # e.g. a shipped "PROMETHEUS_MULTIPROC_DIR=" line — are normalized to
+        # unset here, before prometheus_client is imported; otherwise workers
+        # would write stray db files to the cwd while the scrape renders the
+        # single-process registry. The app never clears the directory:
+        # parallel workers would wipe each other's files, so the deployment
+        # (e.g. tmpfs) must start empty, and the app does not create it — a
+        # typo fails loudly at startup instead of silently writing elsewhere.
+        multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR", "").strip()
+        if multiproc_dir:
+            os.environ["PROMETHEUS_MULTIPROC_DIR"] = multiproc_dir
+        else:
+            os.environ.pop("PROMETHEUS_MULTIPROC_DIR", None)
+        # prometheus_client also presence-checks the deprecated lowercase
+        # spelling; a stale value there would flip workers to mmap mode while
+        # this config (and the render branch) stay unset, so the merge would
+        # silently never happen. Drop it so both mode checks agree, but warn:
+        # an operator who set the legacy name deliberately must not lose
+        # multiprocess mode without a signal.
+        if os.environ.pop("prometheus_multiproc_dir", None) is not None:
+            logging.getLogger(__name__).warning(
+                "prometheus_multiproc_dir is deprecated and ignored; rename it to "
+                "PROMETHEUS_MULTIPROC_DIR to enable multiprocess metrics"
+            )
+        self.PROMETHEUS_MULTIPROC_DIR = multiproc_dir
 
         # Load models configuration from environment variable or file
         models_config = os.getenv("MODELS_CONFIG")
