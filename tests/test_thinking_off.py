@@ -53,3 +53,21 @@ def test_thinking_variant_leaves_other_models_untouched():
 def test_thinking_variant_client_effort_wins():
     body = request_thinking("glm-5.3", {"reasoning_effort": "max"})
     assert body["reasoning_effort"] == "max"
+
+
+def test_deepseek_v41_thinking_variant_uses_max_effort():
+    for model in ("deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "DeepSeek-V4.1-Flash"):
+        body = request_thinking(model, {"model": model})
+        assert body["reasoning_effort"] == "max"
+        assert "chat_template_kwargs" not in body
+
+
+def test_deepseek_v41_thinking_variant_client_effort_wins():
+    body = request_thinking("deepseek-v4.1-flash", {"reasoning_effort": "low"})
+    assert body["reasoning_effort"] == "low"
+
+
+def test_deepseek_v41_thinking_off_unchanged():
+    body = disable_thinking("deepseek-v4.1-flash", {"model": "deepseek-v4.1-flash"})
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "reasoning_effort" not in body
