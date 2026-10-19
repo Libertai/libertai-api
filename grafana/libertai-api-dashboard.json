@@ -86,7 +86,7 @@
       },
       "targets": [
         {
-          "expr": "count(up{job=\"${job}\"} == 1)",
+          "expr": "count(up{job=\"${job}\"} == 1) or vector(0)",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -967,7 +967,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"+Inf\"}[5m])) - sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"60\"}[5m]))",
+          "expr": "sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"+Inf\"}[5m])) - sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"60.0\"}[5m]))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -976,7 +976,7 @@
           "refId": "A"
         },
         {
-          "expr": "sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"+Inf\"}[5m])) - sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"300\"}[5m]))",
+          "expr": "sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"+Inf\"}[5m])) - sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"300.0\"}[5m]))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -985,7 +985,7 @@
           "refId": "B"
         },
         {
-          "expr": "sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"+Inf\"}[5m])) - sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"600\"}[5m]))",
+          "expr": "sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"+Inf\"}[5m])) - sum(rate(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"600.0\"}[5m]))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -1203,7 +1203,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(libertai_gate_wait_seconds_bucket{job=\"${job}\", le=\"6\"}[$__range])) - sum(increase(libertai_gate_wait_seconds_bucket{job=\"${job}\", le=\"5\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(libertai_gate_wait_seconds_bucket{job=\"${job}\", le=\"6.0\"}[$__range])) - sum(increase(libertai_gate_wait_seconds_bucket{job=\"${job}\", le=\"5.0\"}[$__range])) or vector(0)",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -1268,7 +1268,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(libertai_http_request_duration_seconds_count{job=\"${job}\"}[$__range])) - sum(increase(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"60\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(libertai_http_request_duration_seconds_count{job=\"${job}\"}[$__range])) - sum(increase(libertai_http_request_duration_seconds_bucket{job=\"${job}\", le=\"60.0\"}[$__range])) or vector(0)",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -1597,7 +1597,7 @@
       "id": 26,
       "type": "timeseries",
       "title": "Scraper self-health: remote_write failures",
-      "description": "Failures/drops pushing samples from the internal scraper to this Prometheus, plus the scraper's own up (self-scrape job name assumed \"prometheus\" \u2014 adjust if yours differs). Spikes here mean gaps in long-term data even though the API is fine.",
+      "description": "Failures/drops pushing samples from the internal scraper to this Prometheus, plus the scraper's own up (self-scrape job name set by the scraper_job variable, default \"prometheus\"). Spikes here mean gaps in long-term data even though the API is fine.",
       "gridPos": {
         "h": 7,
         "w": 12,
@@ -1659,7 +1659,7 @@
       },
       "targets": [
         {
-          "expr": "rate(prometheus_remote_storage_samples_failed_total{job=\"prometheus\"}[5m])",
+          "expr": "rate(prometheus_remote_storage_samples_failed_total{job=\"${scraper_job}\"}[5m])",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -1668,7 +1668,7 @@
           "refId": "A"
         },
         {
-          "expr": "rate(prometheus_remote_storage_samples_dropped_total{job=\"prometheus\"}[5m])",
+          "expr": "rate(prometheus_remote_storage_samples_dropped_total{job=\"${scraper_job}\"}[5m])",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -1677,7 +1677,7 @@
           "refId": "B"
         },
         {
-          "expr": "up{job=\"prometheus\"}",
+          "expr": "up{job=\"${scraper_job}\"}",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -1721,6 +1721,18 @@
         },
         "hide": 2,
         "label": "Scrape job"
+      },
+      {
+        "name": "scraper_job",
+        "type": "constant",
+        "query": "prometheus",
+        "current": {
+          "selected": false,
+          "text": "prometheus",
+          "value": "prometheus"
+        },
+        "hide": 2,
+        "label": "Scraper job"
       }
     ]
   },
