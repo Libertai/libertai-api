@@ -55,16 +55,18 @@ def test_thinking_variant_client_effort_wins():
     assert body["reasoning_effort"] == "max"
 
 
-def test_deepseek_v41_thinking_variant_uses_max_effort():
+def test_deepseek_v41_thinking_variant_uses_high_effort():
     for model in ("deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "DeepSeek-V4.1-Flash"):
         body = request_thinking(model, {"model": model})
-        assert body["reasoning_effort"] == "max"
+        assert body["reasoning_effort"] == "high"
         assert "chat_template_kwargs" not in body
 
 
 def test_deepseek_v41_thinking_variant_client_effort_wins():
     body = request_thinking("deepseek-v4.1-flash", {"reasoning_effort": "low"})
     assert body["reasoning_effort"] == "low"
+    body = request_thinking("deepseek-v4.1-flash", {"reasoning_effort": "max"})
+    assert body["reasoning_effort"] == "max"
 
 
 def test_deepseek_v41_thinking_off_unchanged():
