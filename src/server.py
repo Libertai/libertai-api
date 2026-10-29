@@ -204,7 +204,7 @@ async def lifespan(_app: FastAPI):
         await close_redis()
 
 
-app = FastAPI(title="LibertAI API", lifespan=lifespan)
+app = FastAPI(title="LibertAI API", lifespan=lifespan, strict_content_type=False)
 
 
 app.add_middleware(_BodySizeLimitMiddleware)
