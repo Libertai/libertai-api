@@ -62,15 +62,35 @@ def openai_model_entry(model_name: str, meta: dict | None, created: int, thinkin
     if meta is None:
         return entry
 
+    # Extra fields follow OpenRouter's public /api/v1/models schema.
     capabilities, pricing = _text_metadata(meta)
+    if meta.get("name"):
+        entry["name"] = f"{meta['name']} (Thinking)" if thinking else meta["name"]
     context_window = capabilities.get("context_window")
     if context_window:
         entry["context_length"] = context_window
     if meta.get("hf_id"):
         entry["hugging_face_id"] = meta["hf_id"]
+    if capabilities:
+        input_modalities = ["text", "image"] if capabilities.get("vision") else ["text"]
+        entry["architecture"] = {
+            "modality": f"{'+'.join(input_modalities)}->text",
+            "input_modalities": input_modalities,
+            "output_modalities": ["text"],
+        }
+        supported_parameters = ["max_tokens", *SUPPORTED_SAMPLING_PARAMETERS]
+        if capabilities.get("function_calling"):
+            supported_parameters += ["tools", "tool_choice"]
+        if thinking:
+            supported_parameters.append("reasoning")
+        entry["supported_parameters"] = supported_parameters
     prompt_price, completion_price = _text_prices(pricing)
     if prompt_price is not None:
-        entry["pricing"] = {"prompt": prompt_price, "completion": completion_price}
+        prices = {"prompt": prompt_price, "completion": completion_price}
+        cached_input_price = pricing.get("price_per_million_cached_input_tokens") if pricing else None
+        if cached_input_price is not None:
+            prices["input_cache_read"] = _per_token_price(cached_input_price)
+        entry["pricing"] = prices
     return entry
 
 

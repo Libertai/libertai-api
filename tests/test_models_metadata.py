@@ -40,6 +40,51 @@ def test_openai_entry_enriched_from_aggregate():
     assert entry["pricing"] == {"prompt": "0.00000015", "completion": "0.0000006"}
 
 
+def test_openai_entry_openrouter_style_metadata():
+    entry = openai_model_entry("glm-5.3", META, created=123)
+    assert entry["name"] == "GLM 5.3"
+    assert entry["architecture"] == {
+        "modality": "text->text",
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+    }
+    assert "tools" in entry["supported_parameters"]
+    assert "temperature" in entry["supported_parameters"]
+    assert "reasoning" not in entry["supported_parameters"]
+    assert "input_cache_read" not in entry["pricing"]
+
+
+def test_openai_entry_vision_and_cached_pricing():
+    meta = {
+        **META,
+        "capabilities": {"text": {**META["capabilities"]["text"], "vision": True}},
+        "pricing": {
+            "text": {
+                "price_per_million_input_tokens": 0.15,
+                "price_per_million_output_tokens": 0.6,
+                "price_per_million_cached_input_tokens": 0.03,
+            }
+        },
+    }
+    entry = openai_model_entry("glm-5.3", meta, created=123)
+    assert entry["architecture"]["input_modalities"] == ["text", "image"]
+    assert entry["architecture"]["modality"] == "text+image->text"
+    assert entry["pricing"]["input_cache_read"] == "0.00000003"
+
+
+def test_openai_thinking_variant_metadata():
+    entry = openai_model_entry("glm-5.3", META, created=123, thinking=True)
+    assert entry["name"] == "GLM 5.3 (Thinking)"
+    assert "reasoning" in entry["supported_parameters"]
+
+
+def test_openai_entry_non_chat_model_has_no_architecture():
+    entry = openai_model_entry("bge-m3", EMBEDDING_META, created=123)
+    assert entry["name"] == "BGE M3"
+    assert "architecture" not in entry
+    assert "supported_parameters" not in entry
+
+
 def test_openai_entry_without_aggregate_metadata_stays_bare():
     entry = openai_model_entry("mystery-model", None, created=123)
     assert entry == {"id": "mystery-model", "object": "model", "created": 123, "owned_by": "libertai"}
