@@ -20,6 +20,7 @@ from src.constants import (
     FREE_GATE_POLL_INTERVAL,
     FREE_REJECT_LOG_INTERVAL,
 )
+from src.dsml_recovery import StreamRecovery, recover_chat_completion, recovers_dsml
 from src.errors import invalid_key_response, model_overloaded_response
 from src.health import server_health_monitor
 from src.image_stripping import IMAGE_STRIP_PATHS, strip_images
@@ -55,6 +56,20 @@ _CONTEXT_LENGTH_MARKER = "maximum context length"
 def _is_context_length_error(body: bytes) -> bool:
     """True when a 400 body says the prompt exceeds the server's context window."""
     return _CONTEXT_LENGTH_MARKER in body.decode("utf-8", "replace").lower()
+
+
+# Paths whose responses carry assistant content that DSML can leak into.
+DSML_RECOVERY_PATHS = frozenset({"v1/chat/completions"})
+
+
+def _wants_dsml_recovery(full_path: str, body: bytes) -> bool:
+    """True for a streaming chat-completion request on a recovery-eligible path."""
+    if full_path not in DSML_RECOVERY_PATHS:
+        return False
+    try:
+        return json.loads(body).get("stream") is True
+    except (ValueError, AttributeError, UnicodeDecodeError):
+        return False
 
 
 def _pool_load(model: str, loads: dict[str, int]) -> int:
@@ -283,6 +298,10 @@ async def proxy_request(
     # Clean up headers
     headers.pop("host", None)
 
+    # Response-side DSML recovery gate (see src/dsml_recovery.py). Chat-completion
+    # responses leak raw tool-call markup on some models; the request is untouched.
+    recovery_model = recovers_dsml(model)
+
     # Transparent compression passthrough: only let the upstream compress with what the
     # client accepts. If the client sent no Accept-Encoding, force identity so httpx
     # doesn't inject its own (gzip/br) — otherwise we'd forward a body encoded with
@@ -495,11 +514,25 @@ async def proxy_request(
             response_headers["set-cookie"] = cookie_header
 
             is_streaming_response = "text/event-stream" in response.headers.get("content-type", "")
+            # Recovery works on plain UTF-8 bodies; a compressed upstream response is
+            # forwarded untouched (SSE is normally identity, this is just a guard).
+            response_encoded = response.headers.get("content-encoding", "identity").lower() not in ("", "identity")
 
             if is_streaming_response:
+                # Response-side DSML recovery, gated per model. Request handling is
+                # untouched: only the reply is rewritten. A rewritten stream is
+                # re-framed as identity-encoded SSE, so drop the upstream encoding
+                # headers in that case (the body we emit is plain UTF-8).
+                dsml_stream = recovery_model and not response_encoded and _wants_dsml_recovery(full_path, body)
+                if dsml_stream:
+                    response_headers.pop("content-encoding", None)
+                    response_headers.pop("content-length", None)
 
-                async def generate_chunks(_server=server, _rid=request_id, _url=url, _response=response):
+                async def generate_chunks(
+                    _server=server, _rid=request_id, _url=url, _response=response, _recover=dsml_stream
+                ):
                     last_refresh = time.monotonic()
+                    recovery = StreamRecovery() if _recover else None
                     try:
                         # aiter_raw (not aiter_bytes) so we forward the body exactly as the
                         # upstream encoded it, matching the Content-Encoding header we pass on.
@@ -509,7 +542,11 @@ async def proxy_request(
                             if now - last_refresh >= LEASE_REFRESH_INTERVAL:
                                 await load_acquire(_server, _rid)
                                 last_refresh = now
-                            yield chunk
+                            for event in recovery.feed(chunk) if recovery is not None else (chunk,):
+                                yield event
+                        if recovery is not None:
+                            for event in recovery.finish():
+                                yield event
                     except asyncio.CancelledError:
                         raise  # client disconnect — normal
                     except Exception as e:
@@ -525,7 +562,8 @@ async def proxy_request(
                     content=generate_chunks(),
                     status_code=response.status_code,
                     headers=response_headers,
-                    media_type=response.headers.get("Content-Type", ""),
+                    # Without the upstream encoding header the body is plain UTF-8 SSE.
+                    media_type="text/event-stream" if dsml_stream else response.headers.get("Content-Type", ""),
                 )
             elif bad_request_body is not None:
                 # aread() already decoded any Content-Encoding, so the headers must not
@@ -544,6 +582,18 @@ async def proxy_request(
                 # Raw bytes, still encoded — kept consistent with the Content-Encoding header.
                 response_bytes = b"".join([chunk async for chunk in response.aiter_raw()])
                 await response.aclose()
+                if (
+                    recovery_model
+                    and not response_encoded
+                    and full_path in DSML_RECOVERY_PATHS
+                    and response.status_code == HTTPStatus.OK
+                ):
+                    # A body without markup comes back byte-identical; a rewritten
+                    # body is plain UTF-8, so the upstream encoding header must go.
+                    response_bytes, rewritten = recover_chat_completion(response_bytes)
+                    if rewritten:
+                        response_headers.pop("content-encoding", None)
+                        response_headers.pop("content-length", None)
                 upstream_request_duration_seconds.labels(model).observe(_monotonic() - upstream_start)
                 return Response(
                     content=response_bytes,
