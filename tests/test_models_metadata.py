@@ -127,7 +127,39 @@ def test_openrouter_entry_schema():
     assert "tools" in output["supported_parameters"]
     assert "reasoning" not in output["supported_parameters"]
     assert "temperature" in output["supported_parameters"]
-    assert entry["compliance"] == {"zdr": True, "hipaa": False}
+    assert "properties" in output["supported_parameters"]["logit_bias"]
+
+
+def test_openrouter_entry_maps_first_party_quant_to_catalog_model():
+    """OpenRouter matches by hugging_face_id; our quant repos are not in its catalog."""
+    meta = {**META, "hf_id": "LibertAIDAI/GLM-5.3-NVFP4"}
+    entry = openrouter_model_entry("glm-5.3", meta, created=123)
+    assert entry is not None
+    assert entry["hugging_face_id"] == "zai-org/GLM-5.3"
+    assert entry["quantization"] == "nvfp4"
+
+
+def test_openrouter_entry_maps_tee_fp8_to_base_model():
+    meta = {**META, "hf_id": "Qwen/Qwen3.8-27B-FP8"}
+    entry = openrouter_model_entry("qwen3.8-27b-tee", meta, created=123)
+    assert entry is not None
+    assert entry["hugging_face_id"] == "Qwen/Qwen3.8-27B"
+    assert entry["quantization"] == "fp8"
+
+
+def test_openrouter_entry_omits_unknown_quantization():
+    meta = {**META, "hf_id": "Qwen/Qwen3.6-35B-A3B"}
+    entry = openrouter_model_entry("qwen3.6-35b-a3b", meta, created=123)
+    assert entry is not None
+    assert entry["hugging_face_id"] == "Qwen/Qwen3.6-35B-A3B"
+    assert "quantization" not in entry
+
+
+def test_openai_entry_uses_catalog_hugging_face_id():
+    meta = {**META, "hf_id": "LibertAIDAI/GLM-5.3-NVFP4"}
+    entry = openai_model_entry("glm-5.3", meta, created=123)
+    assert entry["hugging_face_id"] == "zai-org/GLM-5.3"
+    assert entry["quantization"] == "nvfp4"
 
 
 def test_openrouter_thinking_variant_declares_reasoning():

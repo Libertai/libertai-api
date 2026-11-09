@@ -26,13 +26,30 @@ SUPPORTED_SAMPLING_PARAMETERS = {
     "repetition_penalty": {"type": "range", "min": 0.01, "max": 2},
     "stop": {"type": "array", "max_items": 4},
     "seed": {"type": "integer", "min": 0, "max": 2147483647},
-    "logit_bias": {"type": "object"},
+    "logit_bias": {"type": "object", "properties": {}},
 }
 
 
 def _per_token_price(price_per_million_tokens: float) -> str:
     """USD per token as a decimal string (OpenRouter pricing format), e.g. 0.15 -> '0.00000015'."""
     return format(Decimal(str(price_per_million_tokens)) / Decimal(1_000_000), "f")
+
+
+# OpenRouter attaches an entry to its catalog model by hugging_face_id. The
+# aggregate points at LibertAI's first-party quantization repos for the models
+# we quantize ourselves, which do not exist in OpenRouter's catalog, so publish
+# the upstream model id plus the precision we actually serve.
+OPENROUTER_MODEL_METADATA = {
+    "glm-5.3": {"hugging_face_id": "zai-org/GLM-5.3", "quantization": "nvfp4"},
+    "glm-5.3-flash": {"hugging_face_id": "zai-org/GLM-5.3-Flash", "quantization": "nvfp4"},
+    "qwen3.8-27b-tee": {"hugging_face_id": "Qwen/Qwen3.8-27B", "quantization": "fp8"},
+}
+
+
+def _model_metadata(model_name: str, meta: dict) -> tuple[str | None, str | None]:
+    """(hugging_face_id, quantization) to publish for a model, if known."""
+    override = OPENROUTER_MODEL_METADATA.get(model_name.lower(), {})
+    return override.get("hugging_face_id") or meta.get("hf_id"), override.get("quantization")
 
 
 def _text_metadata(meta: dict) -> tuple[dict, dict | None]:
@@ -69,8 +86,11 @@ def openai_model_entry(model_name: str, meta: dict | None, created: int, thinkin
     context_window = capabilities.get("context_window")
     if context_window:
         entry["context_length"] = context_window
-    if meta.get("hf_id"):
-        entry["hugging_face_id"] = meta["hf_id"]
+    hf_id, quantization = _model_metadata(model_name, meta)
+    if hf_id:
+        entry["hugging_face_id"] = hf_id
+    if quantization:
+        entry["quantization"] = quantization
     if capabilities:
         input_modalities = ["text", "image"] if capabilities.get("vision") else ["text"]
         entry["architecture"] = {
@@ -149,10 +169,12 @@ def openrouter_model_entry(model_name: str, meta: dict, created: int, thinking: 
         "created": created,
         "input_modalities": input_modalities,
         "output_modalities": [output_modality],
-        "compliance": {"zdr": True, "hipaa": False},
     }
-    if meta.get("hf_id"):
-        entry["hugging_face_id"] = meta["hf_id"]
+    hf_id, quantization = _model_metadata(model_name, meta)
+    if hf_id:
+        entry["hugging_face_id"] = hf_id
+    if quantization:
+        entry["quantization"] = quantization
     return entry
 
 
