@@ -28,10 +28,10 @@ class _Config:
     PRIVATE_KEY: str
     X402_API_KEY: str
     X402_WALLET_ADDRESS: str
-    X402_SERVER_WALLET_ADDRESS: str
-    THIRDWEB_SECRET_KEY: str
+    X402_MIN_PRICE: float
+    CDP_API_KEY_ID: str
+    CDP_API_KEY_SECRET: str
     PUBLIC_BASE_URL: str
-    THIRDWEB_VAULT_ACCESS_TOKEN: str
     ALEPH_SENDER_PRIVATE_KEY: str
     ALEPH_AGGREGATE_ADDRESS: str
     REDIS_URL: str
@@ -55,10 +55,12 @@ class _Config:
         self.PRIVATE_KEY = os.getenv("PRIVATE_KEY", "")
         self.X402_API_KEY = os.getenv("X402_API_KEY", "")
         self.X402_WALLET_ADDRESS = os.getenv("X402_WALLET_ADDRESS", "")
-        self.X402_SERVER_WALLET_ADDRESS = os.getenv("X402_SERVER_WALLET_ADDRESS", "")
-        self.THIRDWEB_SECRET_KEY = os.getenv("THIRDWEB_SECRET_KEY", "")
+        # USD floor for any pay-per-request x402 charge: settling costs a facilitator
+        # fee per transaction, so smaller charges lose money.
+        self.X402_MIN_PRICE = float(os.getenv("X402_MIN_PRICE", "") or 0.005)
+        self.CDP_API_KEY_ID = os.getenv("CDP_API_KEY_ID", "")
+        self.CDP_API_KEY_SECRET = os.getenv("CDP_API_KEY_SECRET", "")
         self.PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
-        self.THIRDWEB_VAULT_ACCESS_TOKEN = os.getenv("THIRDWEB_VAULT_ACCESS_TOKEN", "")
         self.ALEPH_SENDER_PRIVATE_KEY = os.getenv("ALEPH_SENDER_PRIVATE_KEY", "")
         # The Aleph aggregate holding LTAI_PRICING (models metadata + redirections),
         # read by src/aleph.py and published by scripts/set_model_redirect.py.

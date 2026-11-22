@@ -2,6 +2,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from x402_helpers import REQUIREMENTS
 
 from src import proxy
 from src.api_keys import KeysManager
@@ -193,18 +194,18 @@ def test_no_auth_request_still_reaches_x402_payment_flow(monkeypatch):
     monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
     monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
 
-    async def _max_price(model, body_json):
-        return 1.0
+    async def _price(model, body_json):
+        return 1.0, "exact"
 
-    async def _requirements(model_name, max_price, resource_url):
-        return [{"scheme": "exact"}]
+    async def _requirements(scheme, price):
+        return REQUIREMENTS
 
-    monkeypatch.setattr(proxy.x402_manager, "compute_max_price", _max_price)
-    monkeypatch.setattr(proxy.x402_manager, "fetch_payment_requirements", _requirements)
+    monkeypatch.setattr(proxy.x402_manager, "compute_price", _price)
+    monkeypatch.setattr(proxy.x402_manager, "build_requirements", _requirements)
     monkeypatch.setattr(
         proxy.x402_manager,
         "build_402_response",
-        lambda requirements: JSONResponse(status_code=402, content={"x402": True}),
+        lambda *args, **kwargs: JSONResponse(status_code=402, content={"x402": True}),
     )
 
     resp = _client().post("/v1/chat/completions", json={"model": "m"})
@@ -597,18 +598,18 @@ def test_no_auth_x402_request_bypasses_the_gate_at_hard_load(monkeypatch):
     monkeypatch.setattr(proxy.config, "FREE_HARD_LOAD", 50)
     _stub_forwarding(monkeypatch, [{"http://up": 50}])
 
-    async def _max_price(model, body_json):
-        return 1.0
+    async def _price(model, body_json):
+        return 1.0, "exact"
 
-    async def _requirements(model_name, max_price, resource_url):
-        return [{"scheme": "exact"}]
+    async def _requirements(scheme, price):
+        return REQUIREMENTS
 
-    monkeypatch.setattr(proxy.x402_manager, "compute_max_price", _max_price)
-    monkeypatch.setattr(proxy.x402_manager, "fetch_payment_requirements", _requirements)
+    monkeypatch.setattr(proxy.x402_manager, "compute_price", _price)
+    monkeypatch.setattr(proxy.x402_manager, "build_requirements", _requirements)
     monkeypatch.setattr(
         proxy.x402_manager,
         "build_402_response",
-        lambda requirements: JSONResponse(status_code=402, content={"x402": True}),
+        lambda *args, **kwargs: JSONResponse(status_code=402, content={"x402": True}),
     )
 
     resp = _post_with_key(None)
