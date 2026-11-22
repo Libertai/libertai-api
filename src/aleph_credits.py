@@ -8,13 +8,19 @@ from pydantic import BaseModel
 from src.config import config
 from src.logger import setup_logger
 from src.telegram import send_message
-from src.x402 import x402_manager
+from src.x402 import (
+    FacilitatorUnavailable,
+    accepted_matches,
+    decode_payment_header,
+    release_payment,
+    reserve_payment,
+    x402_manager,
+)
 
 logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/libertai", tags=["Aleph Credits"])
 
-CREDITS_DECIMALS = 6
 MAX_CREDIT_AMOUNT = 1000.0  # Maximum single purchase in USD
 
 # Singleton — parsed once at import, reused across requests
@@ -46,49 +52,77 @@ async def purchase_aleph_credits(request: Request, body: AlephCreditsRequest):
             detail="Amount must be positive",
         )
 
+    if body.amount < config.X402_MIN_PRICE:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Amount must be at least ${config.X402_MIN_PRICE}",
+        )
+
     if body.amount > MAX_CREDIT_AMOUNT:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
             detail=f"Amount must not exceed ${MAX_CREDIT_AMOUNT}",
         )
 
-    # x402 exact payment flow
-    # NOTE: thirdweb's /accepts endpoint is deterministic for the same inputs, so
-    # re-fetching requirements on the second call (with payment header) will match
-    # what the client originally signed against.
     resource_url = f"{config.PUBLIC_BASE_URL}/libertai/aleph-credits" if config.PUBLIC_BASE_URL else str(request.url)
+    description = f"Purchase {body.amount}$ of Aleph credits for {body.address}"
 
-    requirements = await x402_manager.fetch_payment_requirements_exact(
-        price=body.amount,
-        resource_url=resource_url,
-        description=f"Purchase {body.amount}$ of Aleph credits for {body.address}",
-    )
-    if not requirements or len(requirements) == 0:
+    requirements = await x402_manager.build_requirements("exact", body.amount)
+    if requirements is None:
         raise HTTPException(
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail="Failed to get payment requirements from facilitator",
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            detail="x402 payments temporarily unavailable",
         )
 
-    payment_header = request.headers.get("x-payment") or request.headers.get("payment-signature")
+    payment_header = request.headers.get("payment-signature")
     if not payment_header:
-        return x402_manager.build_402_response(requirements)
+        return x402_manager.build_402_response(requirements, resource_url, description)
 
-    # NOTE: thirdweb's settle endpoint enforces nonce uniqueness, so concurrent
-    # requests carrying the same payment will have at most one succeed at settlement.
-    valid = await x402_manager.verify_payment(payment_header, requirements[0])
-    if not valid:
-        return x402_manager.build_402_response(requirements)
+    payment = decode_payment_header(payment_header)
+    # Credits delivered equal body.amount, so the settled (signed) amount must equal it too.
+    if payment is None or not accepted_matches(payment["accepted"], requirements, exact_amount=True):
+        return x402_manager.build_402_response(
+            requirements, resource_url, description, error="Payment does not match the requirements"
+        )
 
-    # Settle x402 payment (collect USDC) BEFORE transferring credits
-    settled = await x402_manager.settle_payment(payment_header, requirements[0], body.amount)
+    try:
+        invalid_reason = await x402_manager.verify_payment(payment)
+    except FacilitatorUnavailable as e:
+        logger.error(str(e))
+        raise HTTPException(
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            detail="x402 payments temporarily unavailable",
+        )
+    if invalid_reason is not None:
+        return x402_manager.build_402_response(requirements, resource_url, description, error=invalid_reason)
+
+    try:
+        reserved = await reserve_payment(payment)
+    except Exception as e:
+        logger.error(f"x402 payment reservation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            detail="x402 payments temporarily unavailable",
+        )
+    if not reserved:
+        return x402_manager.build_402_response(requirements, resource_url, description, error="Payment already used")
+
+    # Settle (collect USDC) BEFORE transferring credits.
+    settled = await x402_manager.settle_payment(payment)
     if not settled:
+        # The facilitator's on-chain nonce check still prevents a double settle if this one landed.
+        try:
+            await release_payment(payment)
+        except Exception as e:
+            logger.error(f"x402 payment release failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             detail="Payment settlement failed",
         )
 
     # Payment settled — transfer credits via Aleph SDK
-    credit_amount = int(body.amount * 10**CREDITS_DECIMALS)
+    # Same conversion as the settled amount, so credits delivered equal what was charged.
+    credit_amount = int(requirements["amount"])
 
     try:
         async with AuthenticatedAlephHttpClient(account=_aleph_account) as client:

@@ -9,6 +9,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from starlette.routing import Route
+from x402_helpers import REQUIREMENTS, payment_header
 
 from src import proxy
 from src.api_keys import KeysManager
@@ -429,14 +430,14 @@ def test_verified_x402_request_records_x402_tier(monkeypatch):
     async def _noop(*args, **kwargs):
         return None
 
-    async def _max_price(model, body_json):
-        return 1.0
+    async def _price(model, body_json):
+        return 1.0, "exact"
 
-    async def _requirements(model_name, max_price, resource_url):
-        return [{"scheme": "exact"}]
+    async def _requirements(scheme, price):
+        return REQUIREMENTS
 
-    async def _valid(header, requirements):
-        return True
+    async def _valid(payment):
+        return None
 
     async def _chunks():
         yield b'{"ok": true}'
@@ -449,15 +450,20 @@ def test_verified_x402_request_records_x402_tier(monkeypatch):
     monkeypatch.setattr(proxy, "get_model_loads", _loads)
     monkeypatch.setattr(proxy, "load_acquire", _noop)
     monkeypatch.setattr(proxy, "load_release", _noop)
-    monkeypatch.setattr(proxy.x402_manager, "compute_max_price", _max_price)
-    monkeypatch.setattr(proxy.x402_manager, "fetch_payment_requirements", _requirements)
+    monkeypatch.setattr(proxy.x402_manager, "compute_price", _price)
+    monkeypatch.setattr(proxy.x402_manager, "build_requirements", _requirements)
     monkeypatch.setattr(proxy.x402_manager, "verify_payment", _valid)
+
+    async def _reserved(payment):
+        return True
+
+    monkeypatch.setattr(proxy, "reserve_payment", _reserved)
     monkeypatch.setattr(proxy.client, "send", _ok)
 
     resp = _client().post(
         "/v1/chat/completions",
         json={"model": "m"},
-        headers={"x-payment": "some-payment-proof"},
+        headers={"payment-signature": payment_header(REQUIREMENTS)},
     )
 
     assert resp.status_code == 200
@@ -475,18 +481,18 @@ def test_unverified_x402_402_surfaces_only_on_transport_counter(monkeypatch):
     monkeypatch.setattr(proxy.config, "MODELS", {"m": ["http://up"]})
     monkeypatch.setattr(proxy.aleph_service, "resolve", lambda model: model)
 
-    async def _max_price(model, body_json):
-        return 1.0
+    async def _price(model, body_json):
+        return 1.0, "exact"
 
-    async def _requirements(model_name, max_price, resource_url):
-        return [{"scheme": "exact"}]
+    async def _requirements(scheme, price):
+        return REQUIREMENTS
 
-    monkeypatch.setattr(proxy.x402_manager, "compute_max_price", _max_price)
-    monkeypatch.setattr(proxy.x402_manager, "fetch_payment_requirements", _requirements)
+    monkeypatch.setattr(proxy.x402_manager, "compute_price", _price)
+    monkeypatch.setattr(proxy.x402_manager, "build_requirements", _requirements)
     monkeypatch.setattr(
         proxy.x402_manager,
         "build_402_response",
-        lambda requirements: JSONResponse(status_code=402, content={"x402": True}),
+        lambda *args, **kwargs: JSONResponse(status_code=402, content={"x402": True}),
     )
 
     tier_line = 'libertai_requests_total{model="m",tier="x402"}'

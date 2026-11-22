@@ -213,6 +213,8 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    # x402 clients read the payment requirements from this 402 header.
+    expose_headers=["PAYMENT-REQUIRED"],
 )
 # Outermost user middleware: /metrics is intercepted here (token-gated, outside
 # the OpenAPI routes) before CORS or the body cap run, and every other request

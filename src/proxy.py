@@ -43,7 +43,14 @@ from src.metrics import (
 )
 from src.ssl_trust import SSL_CONTEXT
 from src.thinking import disable_thinking, request_thinking
-from src.x402 import x402_manager
+from src.x402 import (
+    FacilitatorUnavailable,
+    accepted_matches,
+    decode_payment_header,
+    outlives_settlement,
+    reserve_payment,
+    x402_manager,
+)
 
 router = APIRouter(tags=["Proxy"])
 
@@ -312,34 +319,69 @@ async def proxy_request(
         except json.JSONDecodeError:
             body_json = {}
 
-        max_price = await x402_manager.compute_max_price(model, body_json)
-        if max_price is None:
+        priced = await x402_manager.compute_price(model, body_json)
+        if priced is None:
             raise HTTPException(
                 status_code=HTTPStatus.NOT_FOUND,
                 detail=f"Model '{model_name}' not available for x402 payments",
             )
+        price, scheme = priced
 
         resource_url = f"{config.PUBLIC_BASE_URL}/{full_path}" if config.PUBLIC_BASE_URL else str(request.url)
+        description = f"Pay-per-use inference for {model_name}"
 
-        requirements = await x402_manager.fetch_payment_requirements(model_name, max_price, resource_url)
-        if not requirements:
+        requirements = await x402_manager.build_requirements(scheme, price)
+        if requirements is None:
             raise HTTPException(
-                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-                detail="Failed to get payment requirements from facilitator",
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                detail="x402 payments temporarily unavailable",
             )
 
-        payment_header = request.headers.get("x-payment") or request.headers.get("payment-signature")
+        payment_header = request.headers.get("payment-signature")
         if not payment_header:
-            return x402_manager.build_402_response(requirements)
+            return x402_manager.build_402_response(requirements, resource_url, description)
 
-        valid = await x402_manager.verify_payment(payment_header, requirements[0])
-        if not valid:
-            return x402_manager.build_402_response(requirements)
+        payment = decode_payment_header(payment_header)
+        if payment is None or not accepted_matches(
+            payment["accepted"], requirements, facilitators=x402_manager.facilitator_signers
+        ):
+            return x402_manager.build_402_response(
+                requirements, resource_url, description, error="Payment does not match the requirements"
+            )
+        if not outlives_settlement(payment):
+            return x402_manager.build_402_response(
+                requirements, resource_url, description, error="Payment authorization expires too soon"
+            )
 
-        # Inject x402 auth headers for downstream
+        try:
+            invalid_reason = await x402_manager.verify_payment(payment)
+        except FacilitatorUnavailable as e:
+            logger.error(str(e))
+            raise HTTPException(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                detail="x402 payments temporarily unavailable",
+            )
+        if invalid_reason is not None:
+            return x402_manager.build_402_response(requirements, resource_url, description, error=invalid_reason)
+
+        try:
+            reserved = await reserve_payment(payment)
+        except Exception as e:
+            logger.error(f"x402 payment reservation failed: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                detail="x402 payments temporarily unavailable",
+            )
+        if not reserved:
+            return x402_manager.build_402_response(
+                requirements, resource_url, description, error="Payment already used"
+            )
+
+        # The model server passes these through to its usage report, from which
+        # the backend settles the payment at the actual cost.
         headers["authorization"] = f"Bearer {config.X402_API_KEY}"
         headers["x-payment"] = payment_header
-        headers["x-payment-requirements"] = json.dumps(requirements[0])
+        headers["x-payment-requirements"] = json.dumps(payment["accepted"])
 
     # Build ordered server pool: healthy first, then capable, then remaining
     healthy_servers = server_health_monitor.healthy_model_urls.get(model, [])
