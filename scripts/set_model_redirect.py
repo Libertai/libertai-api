@@ -60,6 +60,7 @@ async def main() -> None:
     parser.add_argument("--to", dest="to_model", help="Target model (required unless --remove)")
     parser.add_argument("--remove", action="store_true", help="Remove the redirection instead of adding it")
     parser.add_argument("--description", default=DEFAULT_DESCRIPTION)
+    parser.add_argument("--type", default="MAINTENANCE", choices=["MAINTENANCE", "INTERNAL", "DEPRECATED"])
     parser.add_argument("--channel", default=AGGREGATE_CHANNEL)
     parser.add_argument(
         "--aggregate-address",
@@ -103,7 +104,7 @@ async def main() -> None:
                 {
                     "to": to_model,
                     "from": from_model,
-                    "type": "MAINTENANCE",
+                    "type": args.type,
                     "category": "text",
                     "description": args.description,
                 }
